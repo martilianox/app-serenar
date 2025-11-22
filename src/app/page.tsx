@@ -1,1642 +1,2114 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { 
-  Heart, BookOpen, TrendingUp, Wind, Shield, MessageCircle, 
-  Calendar, BarChart3, Sparkles, Menu, X, AlertCircle, 
-  Brain, Activity, Moon, Coffee, Users, Award, Download,
-  Play, Pause, CheckCircle, ChevronRight, Home, User,
-  Clock, Target, Zap, Phone, Eye, Ear, Hand, Smile
-} from "lucide-react"
+import { Heart, BookOpen, TrendingUp, Wind, Shield, MessageCircle, Calendar, BarChart3, Sparkles, Menu, X, AlertCircle, Award, Users, Play, CheckCircle, Brain, Phone, Download, ChevronRight, Clock, Target, Zap, Send, ThumbsUp, User, Edit, Camera, Upload } from "lucide-react"
+import { supabase } from "@/lib/supabase"
 
-type View = "home" | "onboarding" | "monitor" | "diary" | "exercises" | "emergency" | "chat" | "calendar" | "community" | "profile"
+type MoodEntry = {
+  date: string
+  mood: string
+  anxiety: number
+  triggers: string[]
+  symptoms: string[]
+  notes: string
+  time: string
+}
+
+type Exercise = {
+  id: string
+  name: string
+  duration: string
+  description: string
+  type: "breathing" | "meditation" | "grounding" | "cognitive"
+  worked?: boolean
+  steps?: string[]
+}
+
+type ChatMessage = {
+  text: string
+  sender: "user" | "ai"
+  timestamp: Date
+}
+
+type CommunityPost = {
+  id: string
+  user: string
+  avatar: string
+  message: string
+  likes: number
+  time: string
+  comments: CommunityComment[]
+  userProfile?: {
+    frequency?: string
+    goals?: string[]
+  }
+}
+
+type CommunityComment = {
+  id: string
+  user: string
+  avatar: string
+  message: string
+  time: string
+}
+
+type UserProfileType = {
+  name: string
+  age: number
+  frequency: string
+  symptoms: string[]
+  moments: string[]
+  professional: string
+  goals: string[]
+  photo?: string
+}
+
+type QuickQuestion = {
+  id: string
+  text: string
+  category: "anxiety" | "racing-thoughts" | "fear" | "depression"
+  exercises: string[]
+}
 
 export default function Home() {
-  const [currentView, setCurrentView] = useState<View>("onboarding")
-  const [onboardingStep, setOnboardingStep] = useState(0)
+  // Estado do Splash Screen
+  const [showSplash, setShowSplash] = useState(true)
+  const [splashFadeOut, setSplashFadeOut] = useState(false)
+
+  // Estados principais
+  const [userProfile, setUserProfile] = useState<UserProfileType | null>(null)
+  const [userId, setUserId] = useState<string>("")
+  
+  // Estados do perfil
+  const [showProfileEdit, setShowProfileEdit] = useState(false)
+  const [profileForm, setProfileForm] = useState({
+    name: "",
+    age: 18,
+    frequency: "",
+    symptoms: [] as string[],
+    moments: [] as string[],
+    professional: "",
+    goals: [] as string[],
+    photo: ""
+  })
+  
   const [selectedMood, setSelectedMood] = useState<string>("")
   const [anxietyLevel, setAnxietyLevel] = useState(5)
+  const [selectedTriggers, setSelectedTriggers] = useState<string[]>([])
+  const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([])
+  const [quickNotes, setQuickNotes] = useState("")
+  const [moodEntries, setMoodEntries] = useState<MoodEntry[]>([])
+  const [canFillAnamnesis, setCanFillAnamnesis] = useState(true)
+  const [lastAnamnesisDate, setLastAnamnesisDate] = useState<string | null>(null)
+  
   const [diaryEntry, setDiaryEntry] = useState("")
+  const [diaryInsights, setDiaryInsights] = useState<string[]>([])
+  const [showDiaryAnalysis, setShowDiaryAnalysis] = useState(false)
+  
   const [breathingActive, setBreathingActive] = useState(false)
   const [breathPhase, setBreathPhase] = useState<"inhale" | "hold" | "exhale">("inhale")
   const [breathCount, setBreathCount] = useState(0)
+  const [selectedExercise, setSelectedExercise] = useState<Exercise | null>(null)
+  const [exerciseStep, setExerciseStep] = useState(0)
+  const [exerciseActive, setExerciseActive] = useState(false)
+  
   const [showChat, setShowChat] = useState(false)
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [selectedExercise, setSelectedExercise] = useState<string | null>(null)
-  const [exerciseTimer, setExerciseTimer] = useState(0)
-  const [exerciseRunning, setExerciseRunning] = useState(false)
-  const [chatMessages, setChatMessages] = useState<Array<{role: 'user' | 'assistant', content: string}>>([
-    { role: 'assistant', content: 'Olá, eu sou o Médico Amigo. Estou aqui para te ouvir e ajudar. Como você está se sentindo agora?' }
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    { text: "Olá! Sou seu Médico Amigo. Estou aqui para ajudar você a entender o que está sentindo. Como posso te apoiar agora?", sender: "ai", timestamp: new Date() }
   ])
   const [chatInput, setChatInput] = useState("")
-  const [quickNotes, setQuickNotes] = useState("")
-  const [triggers, setTriggers] = useState<string[]>([])
-  const [symptoms, setSymptoms] = useState<string[]>([])
-  const [groundingStep, setGroundingStep] = useState(0)
+  const [isTyping, setIsTyping] = useState(false)
   
-  // Onboarding data
-  const [onboardingData, setOnboardingData] = useState({
-    dailyAnxiety: "",
-    symptoms: [] as string[],
-    moments: [] as string[],
-    hasProfessional: "",
-    goals: [] as string[]
-  })
+  const [showEmergency, setShowEmergency] = useState(false)
+  const [emergencyStep, setEmergencyStep] = useState(0)
+  const [emergencyBreathing, setEmergencyBreathing] = useState(false)
+  
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [currentView, setCurrentView] = useState<"home" | "calendar" | "exercises" | "community" | "learning">("home")
+  
+  const [streak, setStreak] = useState(7)
+  const [achievements, setAchievements] = useState([
+    { name: "Primeira Semana", unlocked: true, icon: "🌱" },
+    { name: "10 Exercícios Completos", unlocked: true, icon: "💪" },
+    { name: "Autoconsciência Nível 2", unlocked: false, icon: "🧠" },
+    { name: "30 Dias de Jornada", unlocked: false, icon: "🏆" }
+  ])
 
+  const [weeklyPlan, setWeeklyPlan] = useState([
+    { activity: "Caminhadas leves", target: 3, completed: 2, icon: "🚶" },
+    { activity: "Meditações guiadas", target: 2, completed: 1, icon: "🧘‍♂️" },
+    { activity: "Diário emocional", target: 1, completed: 1, icon: "📝" },
+    { activity: "Exercícios de respiração", target: 2, completed: 2, icon: "🫁" },
+    { activity: "Higiene do sono", target: 1, completed: 0, icon: "😴" }
+  ])
+
+  // Estados da Comunidade
+  const [communityPosts, setCommunityPosts] = useState<CommunityPost[]>([
+    { 
+      id: "1",
+      user: "Anônimo", 
+      avatar: "A",
+      message: "Hoje consegui controlar uma crise usando a respiração 4-7-8. Obrigado, Serenar!", 
+      likes: 24, 
+      time: "2h atrás",
+      comments: [
+        { id: "c1", user: "Anônimo", avatar: "B", message: "Parabéns! Você é forte! 💪", time: "1h atrás" },
+        { id: "c2", user: "Anônimo", avatar: "C", message: "Que inspiração! Continue assim!", time: "30min atrás" }
+      ],
+      userProfile: { frequency: "Diariamente", goals: ["Controlar crises", "Dormir melhor"] }
+    },
+    { 
+      id: "2",
+      user: "Anônimo", 
+      avatar: "B",
+      message: "Alguém mais sente ansiedade ao acordar? Como vocês lidam?", 
+      likes: 12, 
+      time: "5h atrás",
+      comments: [
+        { id: "c3", user: "Anônimo", avatar: "D", message: "Sim! Eu faço meditação logo ao acordar e ajuda muito.", time: "4h atrás" }
+      ],
+      userProfile: { frequency: "Algumas vezes por semana", goals: ["Entender meus gatilhos"] }
+    },
+    { 
+      id: "3",
+      user: "Anônimo", 
+      avatar: "C",
+      message: "3 semanas sem crises! A jornada é longa, mas estamos juntos.", 
+      likes: 45, 
+      time: "1 dia atrás",
+      comments: [],
+      userProfile: { frequency: "Raramente", goals: ["Ter mais paz no dia a dia"] }
+    },
+    { 
+      id: "4",
+      user: "Anônimo", 
+      avatar: "D",
+      message: "O exercício de grounding 5-4-3-2-1 salvou meu dia hoje. Recomendo!", 
+      likes: 18, 
+      time: "2 dias atrás",
+      comments: [
+        { id: "c4", user: "Anônimo", avatar: "E", message: "Vou tentar também! Obrigado pela dica.", time: "1 dia atrás" }
+      ],
+      userProfile: { frequency: "Diariamente", goals: ["Reduzir pensamentos acelerados"] }
+    }
+  ])
+  const [newPostText, setNewPostText] = useState("")
+  const [selectedPost, setSelectedPost] = useState<string | null>(null)
+  const [newCommentText, setNewCommentText] = useState("")
+
+  // Perguntas prontas para o Médico Amigo
+  const quickQuestions: QuickQuestion[] = [
+    {
+      id: "1",
+      text: "Estou com ansiedade agora",
+      category: "anxiety",
+      exercises: ["1", "2", "3", "4"] // IDs dos exercícios de respiração
+    },
+    {
+      id: "2",
+      text: "Minha mente está acelerada",
+      category: "racing-thoughts",
+      exercises: ["5", "6", "9"] // Meditação e reestruturação
+    },
+    {
+      id: "3",
+      text: "Estou com medo",
+      category: "fear",
+      exercises: ["7", "8", "10"] // Grounding e cartões
+    },
+    {
+      id: "4",
+      text: "Me sinto deprimido",
+      category: "depression",
+      exercises: ["5", "6", "10"] // Meditação e cartões
+    }
+  ]
+
+  // Efeito do Splash Screen
+  useEffect(() => {
+    // Após 2 segundos, inicia o fade out
+    const fadeTimer = setTimeout(() => {
+      setSplashFadeOut(true)
+    }, 2000)
+
+    // Após 3 segundos (2s exibição + 1s fade), remove o splash
+    const hideTimer = setTimeout(() => {
+      setShowSplash(false)
+    }, 3000)
+
+    return () => {
+      clearTimeout(fadeTimer)
+      clearTimeout(hideTimer)
+    }
+  }, [])
+
+  // Inicializar userId e criar perfil padrão
+  useEffect(() => {
+    const initUser = async () => {
+      let storedUserId = localStorage.getItem('serenar_user_id')
+      if (!storedUserId) {
+        storedUserId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        localStorage.setItem('serenar_user_id', storedUserId)
+      }
+      setUserId(storedUserId)
+      
+      // Criar perfil padrão
+      const defaultProfile: UserProfileType = {
+        name: "Usuário",
+        age: 25,
+        frequency: "Algumas vezes por semana",
+        symptoms: [],
+        moments: [],
+        professional: "Não",
+        goals: ["Ter mais paz no dia a dia"],
+        photo: ""
+      }
+      
+      setUserProfile(defaultProfile)
+      
+      // Verificar última anamnese
+      await checkLastAnamnesis(storedUserId)
+    }
+    
+    initUser()
+  }, [])
+
+  // Verificar se pode preencher anamnese hoje
+  const checkLastAnamnesis = async (uid: string) => {
+    const today = new Date().toISOString().split('T')[0]
+    
+    const { data, error } = await supabase
+      .from('daily_anamnesis')
+      .select('date')
+      .eq('user_id', uid)
+      .eq('date', today)
+      .single()
+    
+    if (data && !error) {
+      setCanFillAnamnesis(false)
+      setLastAnamnesisDate(data.date)
+    } else {
+      setCanFillAnamnesis(true)
+      setLastAnamnesisDate(null)
+    }
+  }
+
+  // Dados para monitoramento
   const moods = [
     { emoji: "😊", label: "Tranquilo", color: "bg-[#B0EACD]", value: 2 },
     { emoji: "😌", label: "Calmo", color: "bg-[#A0D8E7]", value: 4 },
     { emoji: "😐", label: "Neutro", color: "bg-[#C3B1E1]", value: 5 },
-    { emoji: "😟", label: "Ansioso", color: "bg-[#7B9CC9]", value: 7 },
+    { emoji: "😟", label: "Ansioso", color: "bg-[#3A5A98] text-white", value: 7 },
     { emoji: "😰", label: "Muito ansioso", color: "bg-[#3A5A98] text-white", value: 9 },
   ]
 
-  const symptomsList = [
-    "Taquicardia", "Aperto no peito", "Pensamentos acelerados", 
-    "Sudorese", "Tremores", "Falta de ar", "Tensão muscular", "Insônia"
-  ]
+  const triggers = ["Trabalho", "Relacionamentos", "Saúde", "Finanças", "Família", "Futuro", "Outro"]
+  const symptoms = ["Coração acelerado", "Respiração difícil", "Tensão muscular", "Pensamentos rápidos", "Inquietação", "Fadiga"]
 
-  const momentsList = [
-    "Manhã", "Tarde", "Noite", "Trabalho", "Sozinho", "Em público", "Antes de dormir"
-  ]
-
-  const goalsList = [
-    "Dormir melhor", "Controlar crises", "Reduzir pensamentos acelerados",
-    "Melhorar autoconhecimento", "Ter mais calma no dia a dia"
-  ]
-
-  const triggersList = [
-    "Trabalho", "Relacionamentos", "Saúde", "Finanças", "Família", 
-    "Solidão", "Multidão", "Prazos", "Conflitos", "Incerteza"
-  ]
-
-  const exercises = [
-    {
-      id: "4-7-8",
-      name: "Respiração 4-7-8",
-      description: "Inspire por 4, segure por 7, expire por 8 segundos. Perfeita para acalmar rapidamente.",
-      duration: 300,
-      category: "Respiração",
-      instructions: [
+  // Exercícios disponíveis com passos detalhados
+  const exercises: Exercise[] = [
+    { 
+      id: "1", 
+      name: "Respiração 4-7-8", 
+      duration: "2 min", 
+      description: "Inspire por 4s, segure por 7s, expire por 8s", 
+      type: "breathing",
+      steps: [
         "Encontre uma posição confortável",
         "Inspire pelo nariz contando até 4",
         "Segure a respiração contando até 7",
         "Expire pela boca contando até 8",
-        "Repita o ciclo 4 vezes"
+        "Repita por 4 ciclos completos"
       ]
     },
-    {
-      id: "box",
-      name: "Respiração Caixa",
-      description: "Inspire 4, segure 4, expire 4, segure 4. Usada por militares para controle emocional.",
-      duration: 240,
-      category: "Respiração",
-      instructions: [
+    { 
+      id: "2", 
+      name: "Respiração Quadrada", 
+      duration: "3 min", 
+      description: "4 segundos para cada fase: inspire, segure, expire, segure", 
+      type: "breathing",
+      steps: [
         "Sente-se confortavelmente",
         "Inspire contando até 4",
-        "Segure contando até 4",
-        "Expire contando até 4",
-        "Segure contando até 4",
-        "Repita por 4 minutos"
+        "Segure a respiração por 4",
+        "Expire lentamente por 4",
+        "Pause por 4 segundos",
+        "Repita por 5 ciclos"
       ]
     },
-    {
-      id: "coherence",
-      name: "Coerência Cardíaca",
-      description: "5 segundos inspirando, 5 expirando. Sincroniza coração e mente.",
-      duration: 300,
-      category: "Respiração",
-      instructions: [
-        "Respire profundamente por 5 segundos",
-        "Expire lentamente por 5 segundos",
+    { 
+      id: "3", 
+      name: "Coerência Cardíaca", 
+      duration: "5 min", 
+      description: "Respiração ritmada para equilibrar o sistema nervoso", 
+      type: "breathing",
+      steps: [
+        "Respire de forma suave e profunda",
+        "Inspire por 5 segundos",
+        "Expire por 5 segundos",
         "Mantenha o ritmo constante",
-        "Foque na sensação de calma"
+        "Continue por 5 minutos"
       ]
     },
-    {
-      id: "anti-panic",
-      name: "Respiração Anti-Pânico",
-      description: "Técnica rápida para interromper crises de pânico.",
-      duration: 180,
-      category: "Respiração",
-      instructions: [
-        "Inspire pelo nariz por 2 segundos",
-        "Expire pela boca por 4 segundos",
-        "Repita até sentir alívio",
-        "Foque apenas na respiração"
+    { 
+      id: "4", 
+      name: "Respiração Anti-Pânico", 
+      duration: "2 min", 
+      description: "Técnica rápida para momentos de crise intensa", 
+      type: "breathing",
+      steps: [
+        "Expire completamente primeiro",
+        "Inspire lentamente pelo nariz",
+        "Expire devagar pela boca",
+        "Foque apenas na respiração",
+        "Repita até se sentir mais calmo"
       ]
     },
-    {
-      id: "grounding",
-      name: "Grounding 5-4-3-2-1",
-      description: "Técnica sensorial para te trazer de volta ao presente durante crises.",
-      duration: 300,
-      category: "Crise",
-      instructions: [
+    { 
+      id: "5", 
+      name: "Meditação Guiada 1min", 
+      duration: "1 min", 
+      description: "Pausa rápida para centrar a mente", 
+      type: "meditation",
+      steps: [
+        "Feche os olhos suavemente",
+        "Observe sua respiração natural",
+        "Deixe os pensamentos passarem",
+        "Volte ao momento presente",
+        "Abra os olhos quando estiver pronto"
+      ]
+    },
+    { 
+      id: "6", 
+      name: "Meditação Guiada 5min", 
+      duration: "5 min", 
+      description: "Relaxamento profundo e consciência plena", 
+      type: "meditation",
+      steps: [
+        "Encontre um lugar tranquilo",
+        "Relaxe cada parte do corpo",
+        "Observe sua respiração",
+        "Aceite pensamentos sem julgamento",
+        "Permaneça no presente"
+      ]
+    },
+    { 
+      id: "7", 
+      name: "Grounding 5-4-3-2-1", 
+      duration: "3 min", 
+      description: "Técnica sensorial para voltar ao presente", 
+      type: "grounding",
+      steps: [
         "5 coisas que você VÊ ao seu redor",
         "4 coisas que você pode TOCAR",
-        "3 coisas que você OUVE",
-        "2 coisas que você CHEIRA",
+        "3 sons que você OUVE",
+        "2 coisas que você pode CHEIRAR",
         "1 coisa que você pode SABOREAR"
       ]
     },
-    {
-      id: "progressive",
-      name: "Relaxamento Muscular Progressivo",
-      description: "Tensione e relaxe grupos musculares para liberar tensão física.",
-      duration: 600,
-      category: "Crise",
-      instructions: [
-        "Tensione os pés por 5 segundos, depois relaxe",
-        "Suba para as pernas, depois abdômen",
-        "Continue com braços, ombros e rosto",
-        "Sinta a diferença entre tensão e relaxamento"
+    { 
+      id: "8", 
+      name: "Relaxamento Muscular", 
+      duration: "10 min", 
+      description: "Tensione e relaxe grupos musculares progressivamente", 
+      type: "grounding",
+      steps: [
+        "Comece pelos pés",
+        "Tensione o músculo por 5 segundos",
+        "Relaxe completamente por 10 segundos",
+        "Suba gradualmente pelo corpo",
+        "Termine com o rosto e cabeça"
       ]
     },
-    {
-      id: "anchor",
-      name: "Técnica da Âncora",
-      description: "Use um objeto ou sensação como âncora emocional.",
-      duration: 240,
-      category: "Crise",
-      instructions: [
-        "Escolha um objeto próximo",
-        "Observe todos os detalhes dele",
-        "Toque-o e sinta a textura",
-        "Use-o como âncora para o presente"
+    { 
+      id: "9", 
+      name: "Reestruturação de Pensamentos", 
+      duration: "5 min", 
+      description: "Questione e transforme pensamentos ansiosos", 
+      type: "cognitive",
+      steps: [
+        "Identifique o pensamento ansioso",
+        "Questione: isso é realmente verdade?",
+        "Busque evidências contra o pensamento",
+        "Crie um pensamento alternativo realista",
+        "Pratique o novo pensamento"
       ]
     },
-    {
-      id: "meditation-1",
-      name: "Meditação 1 minuto",
-      description: "Pausa rápida para resetar a mente.",
-      duration: 60,
-      category: "Meditação",
-      instructions: [
-        "Feche os olhos suavemente",
-        "Foque apenas na sua respiração",
-        "Não julgue pensamentos que surgirem",
-        "Apenas observe e deixe passar"
-      ]
-    },
-    {
-      id: "meditation-3",
-      name: "Meditação 3 minutos",
-      description: "Meditação guiada para acalmar pensamentos acelerados.",
-      duration: 180,
-      category: "Meditação",
-      instructions: [
-        "Encontre um lugar tranquilo",
-        "Respire naturalmente",
-        "Observe seus pensamentos sem julgamento",
-        "Retorne à respiração quando se distrair"
-      ]
-    },
-    {
-      id: "meditation-5",
-      name: "Meditação 5 minutos",
-      description: "Prática mais profunda para clareza mental.",
-      duration: 300,
-      category: "Meditação",
-      instructions: [
-        "Sente-se confortavelmente",
-        "Escaneie seu corpo da cabeça aos pés",
-        "Relaxe cada parte conscientemente",
-        "Permaneça presente no momento"
-      ]
-    },
-    {
-      id: "meditation-10",
-      name: "Meditação 10 minutos",
-      description: "Sessão completa para paz profunda.",
-      duration: 600,
-      category: "Meditação",
-      instructions: [
-        "Dedique este tempo só para você",
-        "Respire profundamente",
-        "Deixe pensamentos fluírem",
-        "Cultive gratidão e paz interior"
+    { 
+      id: "10", 
+      name: "Cartões de Enfrentamento", 
+      duration: "2 min", 
+      description: "Frases que acalmam e fortalecem", 
+      type: "cognitive",
+      steps: [
+        "Eu estou seguro agora",
+        "Isso vai passar, sempre passa",
+        "Eu já superei isso antes",
+        "Posso lidar com isso, um passo de cada vez",
+        "Meus sentimentos são válidos"
       ]
     }
   ]
 
-  const groundingSteps = [
-    { 
-      title: "5 coisas que você VÊ", 
-      icon: Eye,
-      prompt: "Olhe ao redor. Nomeie 5 coisas que você pode ver agora.",
-      examples: ["Uma cadeira", "A parede", "Suas mãos", "Uma janela", "Um objeto"]
-    },
-    { 
-      title: "4 coisas que você pode TOCAR", 
-      icon: Hand,
-      prompt: "Toque em 4 coisas ao seu redor. Sinta a textura.",
-      examples: ["A mesa", "Sua roupa", "O chão", "Um objeto próximo"]
-    },
-    { 
-      title: "3 coisas que você OUVE", 
-      icon: Ear,
-      prompt: "Feche os olhos. Que sons você consegue ouvir?",
-      examples: ["Sua respiração", "Sons distantes", "O silêncio"]
-    },
-    { 
-      title: "2 coisas que você CHEIRA", 
-      icon: Smile,
-      prompt: "Que cheiros você percebe agora?",
-      examples: ["O ar", "Perfume", "Ambiente"]
-    },
-    { 
-      title: "1 coisa que você pode SABOREAR", 
-      icon: Smile,
-      prompt: "Que gosto você sente na boca?",
-      examples: ["Água", "Algo que comeu", "O próprio gosto da boca"]
-    }
-  ]
-
-  // Exercise timer
+  // Efeito de respiração guiada
   useEffect(() => {
-    let interval: NodeJS.Timeout
-    if (exerciseRunning && exerciseTimer > 0) {
-      interval = setInterval(() => {
-        setExerciseTimer(prev => prev - 1)
-      }, 1000)
-    } else if (exerciseTimer === 0 && exerciseRunning) {
-      setExerciseRunning(false)
-    }
-    return () => clearInterval(interval)
-  }, [exerciseRunning, exerciseTimer])
+    if (breathingActive) {
+      const phases = ["inhale", "hold", "exhale"] as const
+      const durations = { inhale: 4000, hold: 7000, exhale: 8000 }
+      
+      const timer = setInterval(() => {
+        setBreathPhase(prev => {
+          const currentIndex = phases.indexOf(prev)
+          const nextIndex = (currentIndex + 1) % phases.length
+          return phases[nextIndex]
+        })
+        setBreathCount(prev => prev + 1)
+      }, durations[breathPhase])
 
-  // Breathing animation
+      return () => clearInterval(timer)
+    }
+  }, [breathingActive, breathPhase])
+
+  // Efeito de respiração de emergência
   useEffect(() => {
-    if (!breathingActive) return
+    if (emergencyBreathing) {
+      const timer = setInterval(() => {
+        setBreathPhase(prev => prev === "inhale" ? "exhale" : "inhale")
+      }, 4000)
 
-    const phases = [
-      { name: "inhale" as const, duration: 4000, text: "Inspire..." },
-      { name: "hold" as const, duration: 4000, text: "Segure..." },
-      { name: "exhale" as const, duration: 4000, text: "Expire..." }
-    ]
-
-    let currentPhaseIndex = 0
-    let cycleCount = 0
-
-    const runCycle = () => {
-      if (!breathingActive) return
-
-      const phase = phases[currentPhaseIndex]
-      setBreathPhase(phase.name)
-
-      setTimeout(() => {
-        currentPhaseIndex++
-        if (currentPhaseIndex >= phases.length) {
-          currentPhaseIndex = 0
-          cycleCount++
-          setBreathCount(cycleCount)
-        }
-        if (breathingActive) runCycle()
-      }, phase.duration)
+      return () => clearInterval(timer)
     }
+  }, [emergencyBreathing])
 
-    runCycle()
-  }, [breathingActive])
-
-  const startExercise = (duration: number) => {
-    setExerciseTimer(duration)
-    setExerciseRunning(true)
+  // Funções do Perfil
+  const openProfileEdit = () => {
+    if (userProfile) {
+      setProfileForm({
+        name: userProfile.name,
+        age: userProfile.age,
+        frequency: userProfile.frequency,
+        symptoms: userProfile.symptoms,
+        moments: userProfile.moments,
+        professional: userProfile.professional,
+        goals: userProfile.goals,
+        photo: userProfile.photo || ""
+      })
+      setShowProfileEdit(true)
+    }
   }
 
-  const toggleExercise = () => {
-    setExerciseRunning(!exerciseRunning)
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        setProfileForm({ ...profileForm, photo: reader.result as string })
+      }
+      reader.readAsDataURL(file)
+    }
   }
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}:${secs.toString().padStart(2, '0')}`
-  }
-
-  const startBreathing = () => {
-    setBreathingActive(true)
-    setBreathCount(0)
-    setBreathPhase("inhale")
-  }
-
-  const stopBreathing = () => {
-    setBreathingActive(false)
-    setBreathPhase("inhale")
-    setBreathCount(0)
-  }
-
-  const handleChatSend = () => {
-    if (!chatInput.trim()) return
+  const saveProfile = async () => {
+    const { error } = await supabase
+      .from('user_profiles')
+      .update({
+        name: profileForm.name,
+        age: profileForm.age,
+        frequency: profileForm.frequency,
+        symptoms: profileForm.symptoms,
+        moments: profileForm.moments,
+        professional: profileForm.professional,
+        goals: profileForm.goals,
+        photo: profileForm.photo,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', userId)
     
-    setChatMessages([...chatMessages, 
-      { role: 'user', content: chatInput },
-      { role: 'assistant', content: 'Entendo como você está se sentindo. Isso deve ser muito difícil. Você está sentindo algum sintoma físico agora, como taquicardia ou falta de ar?' }
-    ])
-    setChatInput("")
+    if (!error) {
+      setUserProfile(profileForm)
+      setShowProfileEdit(false)
+      alert("✅ Perfil atualizado com sucesso!")
+    } else {
+      alert("❌ Erro ao atualizar perfil. Tente novamente.")
+    }
   }
 
-  const saveMonitoring = () => {
-    // Aqui salvaria os dados
-    alert("Registro salvo com sucesso! Continue cuidando de você. 💙")
-    setCurrentView("home")
+  // Funções de Monitoramento
+  const saveMoodEntry = async () => {
+    if (!selectedMood) {
+      alert("Por favor, selecione seu humor antes de salvar.")
+      return
+    }
+
+    if (!canFillAnamnesis) {
+      alert("💙 Você já preencheu a anamnese hoje! Volte amanhã para um novo registro. Isso evita que você fique preocupado demais com os registros.")
+      return
+    }
+
+    const today = new Date().toISOString().split('T')[0]
+    const time = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+
+    // Salvar no Supabase
+    const { error } = await supabase
+      .from('daily_anamnesis')
+      .insert({
+        user_id: userId,
+        date: today,
+        mood: selectedMood,
+        anxiety_level: anxietyLevel,
+        triggers: selectedTriggers,
+        symptoms: selectedSymptoms,
+        notes: quickNotes,
+        time: time
+      })
+
+    if (!error) {
+      const entry: MoodEntry = {
+        date: new Date().toISOString(),
+        mood: selectedMood,
+        anxiety: anxietyLevel,
+        triggers: selectedTriggers,
+        symptoms: selectedSymptoms,
+        notes: quickNotes,
+        time: time
+      }
+      
+      const newEntries = [...moodEntries, entry]
+      setMoodEntries(newEntries)
+      
+      // Reset
+      setSelectedMood("")
+      setAnxietyLevel(5)
+      setSelectedTriggers([])
+      setSelectedSymptoms([])
+      setQuickNotes("")
+      
+      // Marcar que já preencheu hoje
+      setCanFillAnamnesis(false)
+      setLastAnamnesisDate(today)
+      
+      // Alerta inteligente se ansiedade alta por 3 dias
+      const recentEntries = newEntries.slice(-3)
+      if (recentEntries.length === 3 && recentEntries.every(e => e.anxiety >= 7)) {
+        setTimeout(() => {
+          alert("💙 Percebi que sua ansiedade está alta nos últimos 3 dias. Que tal fazer uma pausa e respirar? Se isso continuar, considere buscar apoio profissional. Você não está sozinho.")
+        }, 500)
+      }
+
+      alert("✅ Registro salvo! Você está cuidando de si mesmo. Continue assim!")
+    } else {
+      alert("❌ Erro ao salvar registro. Tente novamente.")
+    }
   }
 
-  const saveDiary = () => {
-    // Aqui salvaria o diário
-    alert("Diário salvo! A IA está analisando seus padrões para te ajudar melhor. 💙")
+  // Funções do Diário
+  const analyzeDiary = () => {
+    if (!diaryEntry.trim()) {
+      alert("Por favor, escreva algo no diário antes de analisar.")
+      return
+    }
+    
+    // Simulação de análise de IA mais inteligente
+    const keywords = diaryEntry.toLowerCase()
+    const insights = []
+    
+    if (keywords.includes('trabalho') || keywords.includes('emprego')) {
+      insights.push("💼 Identifiquei que você menciona 'trabalho' - pode ser um gatilho importante para explorarmos")
+    }
+    
+    if (keywords.includes('noite') || keywords.includes('dormir')) {
+      insights.push("🌙 Seus registros mostram preocupação com o período noturno - vamos trabalhar técnicas de higiene do sono")
+    }
+    
+    if (keywords.includes('preocup') || keywords.includes('tens') || keywords.includes('ansi')) {
+      insights.push("🧠 Você tem usado palavras como 'preocupado' e 'tenso' - vamos praticar técnicas de relaxamento")
+    }
+    
+    if (keywords.includes('reunião') || keywords.includes('apresent')) {
+      insights.push("📊 Padrão detectado: ansiedade aumenta em situações de exposição - isso é muito comum")
+    }
+
+    if (insights.length === 0) {
+      insights.push("✨ Continue registrando seus sentimentos. Quanto mais você escreve, melhor consigo te ajudar a identificar padrões")
+      insights.push("💚 Lembre-se: escrever sobre o que sentimos já é um ato de autocuidado poderoso")
+    }
+    
+    setDiaryInsights(insights)
+    setShowDiaryAnalysis(true)
   }
 
   const exportDiaryPDF = () => {
-    alert("PDF gerado! Você pode compartilhar com seu psicólogo ou psiquiatra. 📄")
+    if (!diaryEntry.trim() && moodEntries.length === 0) {
+      alert("Você precisa ter registros no diário ou monitoramento para exportar o relatório.")
+      return
+    }
+
+    // Simulação de exportação
+    const report = `
+📄 RELATÓRIO EMOCIONAL - SERENAR
+
+📅 Período: ${new Date().toLocaleDateString('pt-BR')}
+👤 Perfil: ${userProfile?.name || 'Em construção'} (${userProfile?.frequency || 'Frequência não definida'})
+
+📊 RESUMO DE HUMOR:
+${moodEntries.slice(-7).map(e => `• ${e.date.split('T')[0]}: ${e.mood} (Ansiedade: ${e.anxiety}/10)`).join('\n')}
+
+🎯 PRINCIPAIS GATILHOS:
+${[...new Set(moodEntries.flatMap(e => e.triggers))].join(', ') || 'Ainda coletando dados'}
+
+💭 SINTOMAS FREQUENTES:
+${[...new Set(moodEntries.flatMap(e => e.symptoms))].join(', ') || 'Ainda coletando dados'}
+
+📝 DIÁRIO EMOCIONAL:
+${diaryEntry || 'Nenhuma entrada recente'}
+
+💡 RECOMENDAÇÕES:
+• Continue registrando diariamente
+• Pratique exercícios de respiração
+• Mantenha rotina de sono regular
+• Considere apoio profissional se necessário
+
+---
+Gerado por Serenar - Seu companheiro de bem-estar
+    `
+    
+    console.log(report)
+    alert("✅ Relatório PDF gerado com sucesso!\n\nInclui: humor, sintomas, ciclos de ansiedade, principais gatilhos e recomendações personalizadas.\n\n(Em um app real, o PDF seria baixado automaticamente)")
   }
 
-  // Onboarding steps
-  const onboardingSteps = [
-    {
-      title: "Bem-vindo ao Serenar",
-      subtitle: "Um espaço seguro, acolhedor e feito especialmente para você",
-      content: (
-        <div className="text-center py-8">
-          <div className="w-32 h-32 mx-auto mb-6 rounded-full bg-gradient-to-br from-[#A0D8E7] to-[#C3B1E1] flex items-center justify-center shadow-2xl">
-            <Heart className="w-16 h-16 text-white" />
-          </div>
-          <p className="text-gray-600 text-lg leading-relaxed mb-4">
-            Aqui você não será julgado. Apenas acolhido.
-          </p>
-          <p className="text-gray-500">
-            Vamos conhecer você melhor para criar uma experiência personalizada?
-          </p>
-        </div>
-      )
-    },
-    {
-      title: "Você sente ansiedade com frequência?",
-      subtitle: "Não há resposta certa ou errada. Queremos apenas te entender melhor.",
-      content: (
-        <div className="space-y-3">
-          {[
-            { text: "Sim, todos os dias", emoji: "😰" },
-            { text: "Algumas vezes por semana", emoji: "😟" },
-            { text: "Raramente", emoji: "😌" },
-            { text: "Não tenho certeza", emoji: "🤔" }
-          ].map(option => (
-            <button
-              key={option.text}
-              onClick={() => setOnboardingData({...onboardingData, dailyAnxiety: option.text})}
-              className={`w-full p-5 rounded-2xl text-left transition-all duration-300 flex items-center gap-4 ${
-                onboardingData.dailyAnxiety === option.text
-                  ? "bg-[#A0D8E7] text-white shadow-xl scale-105"
-                  : "bg-gray-50 hover:bg-gray-100 hover:scale-102"
-              }`}
-            >
-              <span className="text-3xl">{option.emoji}</span>
-              <span className="font-medium">{option.text}</span>
-            </button>
-          ))}
-        </div>
-      )
-    },
-    {
-      title: "O que você costuma sentir?",
-      subtitle: "Selecione todos os sintomas que você reconhece em si",
-      content: (
-        <div className="grid grid-cols-2 gap-3">
-          {symptomsList.map(symptom => (
-            <button
-              key={symptom}
-              onClick={() => {
-                const newSymptoms = onboardingData.symptoms.includes(symptom)
-                  ? onboardingData.symptoms.filter(s => s !== symptom)
-                  : [...onboardingData.symptoms, symptom]
-                setOnboardingData({...onboardingData, symptoms: newSymptoms})
-              }}
-              className={`p-4 rounded-2xl text-sm transition-all duration-300 ${
-                onboardingData.symptoms.includes(symptom)
-                  ? "bg-[#B0EACD] text-[#3A5A98] shadow-lg scale-105"
-                  : "bg-gray-50 hover:bg-gray-100"
-              }`}
-            >
-              {symptom}
-            </button>
-          ))}
-        </div>
-      )
-    },
-    {
-      title: "Em que momentos isso acontece?",
-      subtitle: "Identificar padrões é o primeiro passo para o autocuidado",
-      content: (
-        <div className="grid grid-cols-2 gap-3">
-          {momentsList.map(moment => (
-            <button
-              key={moment}
-              onClick={() => {
-                const newMoments = onboardingData.moments.includes(moment)
-                  ? onboardingData.moments.filter(m => m !== moment)
-                  : [...onboardingData.moments, moment]
-                setOnboardingData({...onboardingData, moments: newMoments})
-              }}
-              className={`p-4 rounded-2xl text-sm transition-all duration-300 ${
-                onboardingData.moments.includes(moment)
-                  ? "bg-[#C3B1E1] text-white shadow-lg scale-105"
-                  : "bg-gray-50 hover:bg-gray-100"
-              }`}
-            >
-              {moment}
-            </button>
-          ))}
-        </div>
-      )
-    },
-    {
-      title: "Você faz acompanhamento profissional?",
-      subtitle: "Psicólogo, psiquiatra ou outro profissional de saúde mental",
-      content: (
-        <div className="space-y-3">
-          {[
-            { text: "Sim, regularmente", emoji: "✅" },
-            { text: "Sim, mas não com frequência", emoji: "🔄" },
-            { text: "Não, mas gostaria", emoji: "💭" },
-            { text: "Não", emoji: "❌" }
-          ].map(option => (
-            <button
-              key={option.text}
-              onClick={() => setOnboardingData({...onboardingData, hasProfessional: option.text})}
-              className={`w-full p-5 rounded-2xl text-left transition-all duration-300 flex items-center gap-4 ${
-                onboardingData.hasProfessional === option.text
-                  ? "bg-[#A0D8E7] text-white shadow-xl scale-105"
-                  : "bg-gray-50 hover:bg-gray-100"
-              }`}
-            >
-              <span className="text-2xl">{option.emoji}</span>
-              <span className="font-medium">{option.text}</span>
-            </button>
-          ))}
-        </div>
-      )
-    },
-    {
-      title: "Quais são seus objetivos?",
-      subtitle: "O que você gostaria de alcançar com o Serenar?",
-      content: (
-        <div className="space-y-3">
-          {goalsList.map(goal => (
-            <button
-              key={goal}
-              onClick={() => {
-                const newGoals = onboardingData.goals.includes(goal)
-                  ? onboardingData.goals.filter(g => g !== goal)
-                  : [...onboardingData.goals, goal]
-                setOnboardingData({...onboardingData, goals: newGoals})
-              }}
-              className={`w-full p-4 rounded-2xl text-left transition-all duration-300 ${
-                onboardingData.goals.includes(goal)
-                  ? "bg-[#B0EACD] text-[#3A5A98] shadow-lg scale-105"
-                  : "bg-gray-50 hover:bg-gray-100"
-              }`}
-            >
-              {goal}
-            </button>
-          ))}
-        </div>
-      )
-    },
-    {
-      title: "Tudo pronto! 🎉",
-      subtitle: "Seu perfil emocional foi criado com carinho",
-      content: (
-        <div className="text-center py-8">
-          <div className="w-32 h-32 mx-auto mb-6 rounded-full bg-gradient-to-br from-[#B0EACD] to-[#A0D8E7] flex items-center justify-center shadow-2xl animate-pulse">
-            <CheckCircle className="w-16 h-16 text-white" />
-          </div>
-          <p className="text-gray-600 text-lg mb-6 leading-relaxed">
-            Com base nas suas respostas, criamos um plano personalizado para você começar sua jornada de autocuidado.
-          </p>
-          <div className="bg-gradient-to-br from-[#A0D8E7]/20 to-[#C3B1E1]/20 rounded-3xl p-6 text-left border-2 border-[#A0D8E7]/30">
-            <h4 className="font-bold text-[#3A5A98] mb-4 text-lg">✨ Seu plano semanal personalizado:</h4>
-            <ul className="space-y-3">
-              <li className="flex items-center gap-3 p-3 bg-white/60 rounded-xl">
-                <Wind className="w-5 h-5 text-[#3A5A98] flex-shrink-0" />
-                <span className="text-sm">3 exercícios de respiração</span>
-              </li>
-              <li className="flex items-center gap-3 p-3 bg-white/60 rounded-xl">
-                <BookOpen className="w-5 h-5 text-[#3A5A98] flex-shrink-0" />
-                <span className="text-sm">2 registros no diário emocional</span>
-              </li>
-              <li className="flex items-center gap-3 p-3 bg-white/60 rounded-xl">
-                <Brain className="w-5 h-5 text-[#3A5A98] flex-shrink-0" />
-                <span className="text-sm">1 meditação guiada</span>
-              </li>
-              <li className="flex items-center gap-3 p-3 bg-white/60 rounded-xl">
-                <Activity className="w-5 h-5 text-[#3A5A98] flex-shrink-0" />
-                <span className="text-sm">Monitoramento diário do humor</span>
-              </li>
-            </ul>
-          </div>
-        </div>
-      )
+  // Função para lidar com perguntas prontas
+  const handleQuickQuestion = (question: QuickQuestion) => {
+    // Adicionar a pergunta como mensagem do usuário
+    const userMessage: ChatMessage = { 
+      text: question.text, 
+      sender: "user", 
+      timestamp: new Date() 
     }
-  ]
+    setChatMessages(prev => [...prev, userMessage])
+    setIsTyping(true)
+    
+    // Resposta contextual baseada na categoria
+    setTimeout(() => {
+      let response = ""
+      let exerciseNames: string[] = []
+      
+      // Buscar nomes dos exercícios recomendados
+      question.exercises.forEach(exId => {
+        const ex = exercises.find(e => e.id === exId)
+        if (ex) exerciseNames.push(ex.name)
+      })
+      
+      switch (question.category) {
+        case "anxiety":
+          response = `Entendo que você está sentindo ansiedade agora. Primeiro, saiba que você está seguro e isso vai passar. Vamos trabalhar juntos para acalmar seu corpo e mente.\n\n💙 Recomendo começar com:\n• ${exerciseNames.slice(0, 3).join('\n• ')}\n\nQuer que eu te guie em um desses exercícios? Ou prefere conversar mais sobre o que está sentindo?`
+          break
+        case "racing-thoughts":
+          response = `Pensamentos acelerados podem ser muito desconfortáveis. Vamos desacelerar juntos, um passo de cada vez.\n\n🧠 Exercícios que podem ajudar:\n• ${exerciseNames.join('\n• ')}\n\nVocê também pode me contar o que está passando pela sua cabeça. Às vezes, colocar em palavras já ajuda a organizar os pensamentos.`
+          break
+        case "fear":
+          response = `O medo é uma emoção válida e você não está sozinho. Vamos trabalhar técnicas para te trazer de volta ao momento presente, onde você está seguro.\n\n🛡️ Técnicas recomendadas:\n• ${exerciseNames.join('\n• ')}\n\nO que você está sentindo medo agora? Quer conversar sobre isso?`
+          break
+        case "depression":
+          response = `Percebo que você está se sentindo para baixo. Seus sentimentos são válidos e é corajoso buscar ajuda. Vamos juntos, com calma e sem pressa.\n\n💚 Práticas que podem ajudar:\n• ${exerciseNames.join('\n• ')}\n\nLembre-se: você não está sozinho. Se esses sentimentos persistirem, considere buscar apoio profissional. Quer conversar mais sobre como você está se sentindo?`
+          break
+      }
+      
+      const aiMessage: ChatMessage = { 
+        text: response, 
+        sender: "ai", 
+        timestamp: new Date() 
+      }
+      setChatMessages(prev => [...prev, aiMessage])
+      setIsTyping(false)
+      
+      // Adicionar botões de ação para ir aos exercícios
+      setTimeout(() => {
+        const actionMessage: ChatMessage = {
+          text: "💡 Você pode acessar esses exercícios na aba 'Exercícios' do menu principal. Quer que eu te ajude com algo mais?",
+          sender: "ai",
+          timestamp: new Date()
+        }
+        setChatMessages(prev => [...prev, actionMessage])
+      }, 1000)
+    }, 1500)
+  }
 
-  // Navigation
-  const navigationItems = [
-    { id: "home" as View, icon: Home, label: "Início" },
-    { id: "monitor" as View, icon: Activity, label: "Registrar" },
-    { id: "diary" as View, icon: BookOpen, label: "Diário" },
-    { id: "exercises" as View, icon: Wind, label: "Exercícios" },
-    { id: "emergency" as View, icon: AlertCircle, label: "SOS" },
-  ]
+  // Funções de Chat com IA mais inteligente
+  const sendChatMessage = () => {
+    if (!chatInput.trim()) return
+    
+    const userMessage: ChatMessage = { 
+      text: chatInput, 
+      sender: "user", 
+      timestamp: new Date() 
+    }
+    setChatMessages(prev => [...prev, userMessage])
+    setChatInput("")
+    setIsTyping(true)
+    
+    // Resposta inteligente baseada no contexto
+    setTimeout(() => {
+      const input = chatInput.toLowerCase()
+      let response = ""
+      
+      // Respostas contextuais
+      if (input.includes('crise') || input.includes('pânico') || input.includes('desespero')) {
+        response = "Entendo que você está passando por um momento difícil agora. Primeiro, vamos respirar juntos. Você está seguro. Que tal tentarmos o exercício de respiração anti-pânico? Ele pode ajudar a acalmar rapidamente."
+      } else if (input.includes('dormir') || input.includes('insônia') || input.includes('sono')) {
+        response = "Problemas com sono são muito comuns em quem tem ansiedade. Vamos trabalhar isso juntos. Recomendo: evitar telas 1h antes de dormir, criar uma rotina relaxante e tentar a meditação guiada de 5 minutos antes de deitar."
+      } else if (input.includes('trabalho') || input.includes('emprego') || input.includes('chefe')) {
+        response = "O ambiente de trabalho pode ser um grande gatilho de ansiedade. Isso é muito comum. Que tal identificarmos especificamente o que te deixa mais ansioso no trabalho? Podemos trabalhar técnicas específicas para essas situações."
+      } else if (input.includes('sozinho') || input.includes('ninguém') || input.includes('isolado')) {
+        response = "Você não está sozinho, eu estou aqui com você. E saiba que milhões de pessoas passam pelo que você está passando. Seus sentimentos são válidos. Quer conversar mais sobre o que está sentindo?"
+      } else if (input.includes('melhor') || input.includes('bem') || input.includes('obrigad')) {
+        response = "Fico muito feliz em saber que você está se sentindo melhor! Isso é um grande passo. Continue cuidando de si mesmo. Lembre-se: você é mais forte do que imagina. 💙"
+      } else if (input.includes('ajuda') || input.includes('não sei') || input.includes('como')) {
+        response = "Estou aqui para te ajudar. Vamos juntos, um passo de cada vez. Que tal começarmos identificando o que você está sentindo agora? Isso pode ser: ansiedade, medo, tristeza, tensão... O que mais se aproxima?"
+      } else if (input.includes('respiração') || input.includes('respirar')) {
+        response = "Ótima escolha! A respiração é uma ferramenta poderosa. Recomendo começar com a Respiração 4-7-8 ou a Respiração Quadrada. Ambas são muito eficazes para acalmar o sistema nervoso. Quer que eu te guie?"
+      } else {
+        // Respostas gerais empáticas
+        const generalResponses = [
+          "Entendo como você está se sentindo. Isso é muito comum e você não está sozinho. Seus sentimentos são válidos.",
+          "Percebo que você está passando por um momento difícil. Vamos juntos, um passo de cada vez. O que você está sentindo agora?",
+          "Seus sentimentos são importantes. Quer me contar mais sobre o que está acontecendo? Estou aqui para ouvir sem julgamentos.",
+          "Lembre-se: você está seguro agora. Vamos focar no presente juntos. Que tal tentarmos um exercício de respiração?",
+          "É corajoso buscar ajuda e falar sobre o que sente. Isso já é um grande passo. Como posso te apoiar melhor agora?"
+        ]
+        response = generalResponses[Math.floor(Math.random() * generalResponses.length)]
+      }
+      
+      const aiMessage: ChatMessage = { 
+        text: response, 
+        sender: "ai", 
+        timestamp: new Date() 
+      }
+      setChatMessages(prev => [...prev, aiMessage])
+      setIsTyping(false)
+    }, 1500)
+  }
 
-  const getBreathingText = () => {
-    switch(breathPhase) {
-      case "inhale": return "Inspire profundamente..."
-      case "hold": return "Segure a respiração..."
-      case "exhale": return "Expire lentamente..."
+  // Funções de Exercícios
+  const startExercise = (exercise: Exercise) => {
+    setSelectedExercise(exercise)
+    setExerciseStep(0)
+    setExerciseActive(true)
+  }
+
+  const nextExerciseStep = () => {
+    if (selectedExercise && exerciseStep < (selectedExercise.steps?.length || 0) - 1) {
+      setExerciseStep(exerciseStep + 1)
+    } else {
+      completeExercise()
     }
   }
 
-  const getBreathingScale = () => {
-    switch(breathPhase) {
-      case "inhale": return "scale-125"
-      case "hold": return "scale-125"
-      case "exhale": return "scale-75"
+  const completeExercise = () => {
+    setExerciseActive(false)
+    alert("🎉 Parabéns! Você completou o exercício. Como você se sente agora? Marque se funcionou para você!")
+  }
+
+  const markExerciseWorked = (exerciseId: string, worked: boolean) => {
+    alert(worked 
+      ? "✅ Ótimo! Vou recomendar mais exercícios como este para você." 
+      : "📝 Entendi. Vou sugerir outras técnicas que podem funcionar melhor para você."
+    )
+  }
+
+  // Funções de Emergência
+  const emergencySteps = [
+    { 
+      message: "Você está seguro agora", 
+      action: "Respire comigo",
+      description: "Vamos começar respirando juntos. Inspire devagar..."
+    },
+    { 
+      message: "Isso vai passar", 
+      action: "Vamos fazer grounding",
+      description: "Olhe ao redor. Nomeie 5 coisas que você vê..."
+    },
+    { 
+      message: "Você não está sozinho", 
+      action: "Estou aqui com você",
+      description: "Você está indo muito bem. Continue respirando..."
     }
+  ]
+
+  const startEmergencyBreathing = () => {
+    setEmergencyBreathing(true)
+    setTimeout(() => setEmergencyBreathing(false), 60000) // 1 minuto
+  }
+
+  // Funções da Comunidade
+  const createPost = () => {
+    if (!newPostText.trim()) {
+      alert("Por favor, escreva algo antes de compartilhar.")
+      return
+    }
+
+    const newPost: CommunityPost = {
+      id: Date.now().toString(),
+      user: "Você",
+      avatar: userProfile?.name?.[0] || "V",
+      message: newPostText,
+      likes: 0,
+      time: "Agora",
+      comments: [],
+      userProfile: userProfile || undefined
+    }
+
+    setCommunityPosts([newPost, ...communityPosts])
+    setNewPostText("")
+    alert("✅ Sua história foi compartilhada! Obrigado por contribuir com a comunidade. 💙")
+  }
+
+  const likePost = (postId: string) => {
+    setCommunityPosts(posts => 
+      posts.map(post => 
+        post.id === postId 
+          ? { ...post, likes: post.likes + 1 }
+          : post
+      )
+    )
+  }
+
+  const addComment = (postId: string) => {
+    if (!newCommentText.trim()) {
+      alert("Por favor, escreva um comentário.")
+      return
+    }
+
+    setCommunityPosts(posts =>
+      posts.map(post =>
+        post.id === postId
+          ? {
+              ...post,
+              comments: [
+                ...post.comments,
+                {
+                  id: Date.now().toString(),
+                  user: "Você",
+                  avatar: userProfile?.name?.[0] || "V",
+                  message: newCommentText,
+                  time: "Agora"
+                }
+              ]
+            }
+          : post
+      )
+    )
+    setNewCommentText("")
+    setSelectedPost(null)
+    alert("✅ Comentário adicionado!")
+  }
+
+  // Renderização do Splash Screen
+  if (showSplash) {
+    return (
+      <div 
+        className={`fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-[#A0D8E7] via-[#C3B1E1] to-[#B0EACD] transition-opacity duration-1000 ${
+          splashFadeOut ? 'opacity-0' : 'opacity-100'
+        }`}
+      >
+        <div className="text-center animate-fadeIn">
+          <img 
+            src="https://k6hrqrxuu8obbfwn.public.blob.vercel-storage.com/temp/cb3011f4-e48e-4c6d-b4ee-7e35611a1b6f.png" 
+            alt="Serenar Logo" 
+            className="w-48 h-48 mx-auto mb-6 rounded-full object-cover animate-pulse"
+          />
+          <h1 className="text-5xl font-bold text-white mb-3 drop-shadow-lg">Serenar</h1>
+          <p className="text-xl text-white/90 drop-shadow-md">Cultive a paz interior</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Renderização do Modal de Edição de Perfil
+  if (showProfileEdit) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#A0D8E7]/20 via-white to-[#C3B1E1]/20 flex items-center justify-center p-4">
+        <div className="max-w-2xl w-full bg-white rounded-3xl shadow-2xl p-8 sm:p-12 max-h-[90vh] overflow-y-auto">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-3xl font-bold text-[#3A5A98]">Editar Perfil</h2>
+            <button
+              onClick={() => setShowProfileEdit(false)}
+              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+            >
+              <X className="w-6 h-6 text-gray-600" />
+            </button>
+          </div>
+
+          <div className="space-y-6">
+            {/* Foto de Perfil */}
+            <div className="flex flex-col items-center mb-6">
+              <div className="relative">
+                {profileForm.photo ? (
+                  <img 
+                    src={profileForm.photo} 
+                    alt="Foto de perfil" 
+                    className="w-32 h-32 rounded-full object-cover border-4 border-[#A0D8E7]"
+                  />
+                ) : (
+                  <div className="w-32 h-32 rounded-full bg-gradient-to-br from-[#A0D8E7] to-[#C3B1E1] flex items-center justify-center">
+                    <User className="w-16 h-16 text-white" />
+                  </div>
+                )}
+                <label className="absolute bottom-0 right-0 p-2 bg-[#A0D8E7] rounded-full cursor-pointer hover:bg-[#C3B1E1] transition-colors shadow-lg">
+                  <Camera className="w-5 h-5 text-white" />
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    onChange={handlePhotoUpload}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+              <p className="text-sm text-gray-500 mt-2">Clique na câmera para adicionar foto</p>
+            </div>
+
+            {/* Nome */}
+            <div>
+              <label className="block text-sm font-medium text-[#3A5A98] mb-2">Nome</label>
+              <input
+                type="text"
+                value={profileForm.name}
+                onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-[#A0D8E7] transition-colors"
+                placeholder="Seu nome"
+              />
+            </div>
+
+            {/* Idade */}
+            <div>
+              <label className="block text-sm font-medium text-[#3A5A98] mb-2">Idade</label>
+              <input
+                type="number"
+                value={profileForm.age}
+                onChange={(e) => setProfileForm({ ...profileForm, age: parseInt(e.target.value) || 18 })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-[#A0D8E7] transition-colors"
+                min="1"
+                max="120"
+              />
+            </div>
+
+            {/* Frequência */}
+            <div>
+              <label className="block text-sm font-medium text-[#3A5A98] mb-2">Frequência da ansiedade</label>
+              <select
+                value={profileForm.frequency}
+                onChange={(e) => setProfileForm({ ...profileForm, frequency: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-[#A0D8E7] transition-colors"
+              >
+                <option value="">Selecione...</option>
+                <option value="Diariamente">Diariamente</option>
+                <option value="Algumas vezes por semana">Algumas vezes por semana</option>
+                <option value="Raramente">Raramente</option>
+                <option value="Não tenho certeza">Não tenho certeza</option>
+              </select>
+            </div>
+
+            {/* Sintomas */}
+            <div>
+              <label className="block text-sm font-medium text-[#3A5A98] mb-2">Sintomas</label>
+              <div className="flex flex-wrap gap-2">
+                {["Taquicardia", "Aperto no peito", "Pensamentos acelerados", "Sudorese", "Tremores", "Dificuldade para respirar"].map((symptom) => (
+                  <button
+                    key={symptom}
+                    onClick={() => {
+                      const updated = profileForm.symptoms.includes(symptom)
+                        ? profileForm.symptoms.filter(s => s !== symptom)
+                        : [...profileForm.symptoms, symptom]
+                      setProfileForm({ ...profileForm, symptoms: updated })
+                    }}
+                    className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                      profileForm.symptoms.includes(symptom)
+                        ? 'bg-[#B0EACD] text-[#3A5A98] shadow-md'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {symptom}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Momentos */}
+            <div>
+              <label className="block text-sm font-medium text-[#3A5A98] mb-2">Momentos críticos</label>
+              <div className="flex flex-wrap gap-2">
+                {["Ao acordar", "Durante o trabalho", "À noite", "Em situações sociais", "Sem padrão definido"].map((moment) => (
+                  <button
+                    key={moment}
+                    onClick={() => {
+                      const updated = profileForm.moments.includes(moment)
+                        ? profileForm.moments.filter(m => m !== moment)
+                        : [...profileForm.moments, moment]
+                      setProfileForm({ ...profileForm, moments: updated })
+                    }}
+                    className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                      profileForm.moments.includes(moment)
+                        ? 'bg-[#C3B1E1] text-white shadow-md'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {moment}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Acompanhamento */}
+            <div>
+              <label className="block text-sm font-medium text-[#3A5A98] mb-2">Acompanhamento profissional</label>
+              <select
+                value={profileForm.professional}
+                onChange={(e) => setProfileForm({ ...profileForm, professional: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-[#A0D8E7] transition-colors"
+              >
+                <option value="">Selecione...</option>
+                <option value="Sim, com psicólogo">Sim, com psicólogo</option>
+                <option value="Sim, com psiquiatra">Sim, com psiquiatra</option>
+                <option value="Sim, com ambos">Sim, com ambos</option>
+                <option value="Não, mas gostaria">Não, mas gostaria</option>
+                <option value="Não">Não</option>
+              </select>
+            </div>
+
+            {/* Objetivos */}
+            <div>
+              <label className="block text-sm font-medium text-[#3A5A98] mb-2">Objetivos</label>
+              <div className="flex flex-wrap gap-2">
+                {["Dormir melhor", "Controlar crises", "Reduzir pensamentos acelerados", "Entender meus gatilhos", "Ter mais paz no dia a dia"].map((goal) => (
+                  <button
+                    key={goal}
+                    onClick={() => {
+                      const updated = profileForm.goals.includes(goal)
+                        ? profileForm.goals.filter(g => g !== goal)
+                        : [...profileForm.goals, goal]
+                      setProfileForm({ ...profileForm, goals: updated })
+                    }}
+                    className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                      profileForm.goals.includes(goal)
+                        ? 'bg-[#A0D8E7] text-white shadow-md'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {goal}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-3 mt-8">
+            <button
+              onClick={saveProfile}
+              className="flex-1 bg-gradient-to-r from-[#A0D8E7] to-[#C3B1E1] text-white py-4 rounded-full font-medium hover:shadow-lg transition-all"
+            >
+              Salvar Alterações
+            </button>
+            <button
+              onClick={() => setShowProfileEdit(false)}
+              className="px-8 py-4 bg-gray-100 text-gray-600 rounded-full font-medium hover:bg-gray-200 transition-all"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Renderização da Área de Emergência
+  if (showEmergency) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-red-50 via-orange-50 to-yellow-50 flex items-center justify-center p-4">
+        <div className="max-w-2xl w-full bg-white rounded-3xl shadow-2xl p-8 sm:p-12">
+          <div className="text-center mb-8">
+            <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-[#A0D8E7] to-[#C3B1E1] flex items-center justify-center animate-pulse">
+              <Shield className="w-10 h-10 text-white" />
+            </div>
+            <h2 className="text-3xl font-bold text-[#3A5A98] mb-2">
+              {emergencySteps[emergencyStep].message}
+            </h2>
+            <p className="text-xl text-gray-600 mb-2">
+              {emergencySteps[emergencyStep].action}
+            </p>
+            <p className="text-sm text-gray-500">
+              {emergencySteps[emergencyStep].description}
+            </p>
+          </div>
+          
+          <div className="mb-8">
+            <div 
+              className={`w-64 h-64 mx-auto rounded-full flex items-center justify-center transition-all duration-1000 ${
+                emergencyBreathing 
+                  ? breathPhase === "inhale" 
+                    ? 'bg-gradient-to-br from-[#A0D8E7] to-[#C3B1E1] scale-110' 
+                    : 'bg-gradient-to-br from-[#B0EACD] to-[#A0D8E7] scale-90'
+                  : 'bg-gradient-to-br from-[#A0D8E7] to-[#C3B1E1]'
+              }`}
+            >
+              <div className="text-white text-center">
+                <div className="text-6xl mb-4">
+                  {emergencyBreathing ? (breathPhase === "inhale" ? "↑" : "↓") : "○"}
+                </div>
+                <div className="text-2xl font-medium">
+                  {emergencyBreathing 
+                    ? (breathPhase === "inhale" ? "Inspire" : "Expire")
+                    : "Respire devagar"
+                  }
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div className="space-y-3">
+            {!emergencyBreathing ? (
+              <button
+                onClick={startEmergencyBreathing}
+                className="w-full bg-gradient-to-r from-[#A0D8E7] to-[#C3B1E1] text-white py-4 rounded-full font-medium hover:shadow-lg transition-all"
+              >
+                <Wind className="w-5 h-5 inline mr-2" />
+                Começar Respiração Guiada
+              </button>
+            ) : (
+              <button
+                onClick={() => setEmergencyStep((emergencyStep + 1) % emergencySteps.length)}
+                className="w-full bg-gradient-to-r from-[#A0D8E7] to-[#C3B1E1] text-white py-4 rounded-full font-medium hover:shadow-lg transition-all"
+              >
+                Próximo Passo
+              </button>
+            )}
+            
+            <button
+              onClick={() => {
+                setShowChat(true)
+                setShowEmergency(false)
+              }}
+              className="w-full bg-white border-2 border-[#A0D8E7] text-[#3A5A98] py-4 rounded-full font-medium hover:shadow-lg transition-all"
+            >
+              <MessageCircle className="w-5 h-5 inline mr-2" />
+              Conversar com Médico Amigo
+            </button>
+            
+            <button
+              onClick={() => setShowEmergency(false)}
+              className="w-full bg-gray-100 text-gray-600 py-4 rounded-full font-medium hover:bg-gray-200 transition-all"
+            >
+              Estou Melhor Agora
+            </button>
+            
+            <div className="pt-4 border-t border-gray-200 text-center">
+              <p className="text-sm text-gray-600 mb-2">Se precisar de ajuda profissional imediata:</p>
+              <a 
+                href="tel:188" 
+                className="inline-flex items-center gap-2 text-[#3A5A98] font-medium hover:underline"
+              >
+                <Phone className="w-4 h-4" />
+                CVV: 188 (24h, gratuito)
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Modal de Chat do Médico Amigo (tela cheia)
+  if (showChat) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#3A5A98] to-[#A0D8E7] flex flex-col">
+        {/* Header do Chat */}
+        <div className="bg-white/10 backdrop-blur-sm border-b border-white/20 p-4">
+          <div className="max-w-4xl mx-auto flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
+                <MessageCircle className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-white">Médico Amigo</h2>
+                <p className="text-sm text-white/80">Sempre aqui para você</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowChat(false)}
+              className="p-2 hover:bg-white/10 rounded-full transition-colors"
+            >
+              <X className="w-6 h-6 text-white" />
+            </button>
+          </div>
+        </div>
+
+        {/* Perguntas Prontas (aparecem no início) */}
+        {chatMessages.length === 1 && (
+          <div className="bg-white/5 backdrop-blur-sm border-b border-white/10 p-4">
+            <div className="max-w-4xl mx-auto">
+              <p className="text-white/90 text-sm mb-3 text-center">💙 Como posso te ajudar agora?</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {quickQuestions.map((question) => (
+                  <button
+                    key={question.id}
+                    onClick={() => handleQuickQuestion(question)}
+                    className="p-4 bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-2xl text-left transition-all border border-white/20 hover:border-white/40 group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                        {question.category === "anxiety" && "😰"}
+                        {question.category === "racing-thoughts" && "🧠"}
+                        {question.category === "fear" && "😨"}
+                        {question.category === "depression" && "😔"}
+                      </div>
+                      <span className="text-white font-medium">{question.text}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Área de Mensagens */}
+        <div className="flex-1 overflow-y-auto p-4">
+          <div className="max-w-4xl mx-auto space-y-4">
+            {chatMessages.map((msg, idx) => (
+              <div
+                key={idx}
+                className={`rounded-2xl p-4 max-w-[85%] animate-fadeIn ${
+                  msg.sender === "ai"
+                    ? "bg-white/20 backdrop-blur-sm mr-auto"
+                    : "bg-[#B0EACD] text-[#3A5A98] ml-auto"
+                }`}
+              >
+                <p className={msg.sender === "ai" ? "text-white whitespace-pre-line" : "whitespace-pre-line"}>{msg.text}</p>
+                <span className={`text-xs mt-2 block ${msg.sender === "ai" ? "text-white/70" : "opacity-70"}`}>
+                  {msg.timestamp.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            ))}
+            {isTyping && (
+              <div className="bg-white/20 backdrop-blur-sm rounded-2xl p-4 max-w-[85%] mr-auto">
+                <div className="flex gap-1">
+                  <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Input de Mensagem */}
+        <div className="bg-white/10 backdrop-blur-sm border-t border-white/20 p-4">
+          <div className="max-w-4xl mx-auto flex gap-3">
+            <input
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()}
+              placeholder="Digite sua mensagem..."
+              className="flex-1 px-6 py-4 rounded-full bg-white/20 backdrop-blur-sm border border-white/30 focus:outline-none focus:border-white/50 placeholder-white/60 text-white"
+            />
+            <button
+              onClick={sendChatMessage}
+              className="px-8 py-4 bg-white text-[#3A5A98] rounded-full font-medium hover:shadow-lg transition-all flex items-center gap-2"
+            >
+              <Send className="w-5 h-5" />
+              Enviar
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Modal de Exercício Ativo
+  if (exerciseActive && selectedExercise) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#A0D8E7]/20 via-white to-[#C3B1E1]/20 flex items-center justify-center p-4">
+        <div className="max-w-2xl w-full bg-white rounded-3xl shadow-2xl p-8 sm:p-12">
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-[#3A5A98]">{selectedExercise.name}</h2>
+              <span className="px-4 py-2 bg-[#B0EACD] text-[#3A5A98] rounded-full text-sm font-medium">
+                {exerciseStep + 1} de {selectedExercise.steps?.length}
+              </span>
+            </div>
+            
+            <div className="flex gap-2 mb-8">
+              {selectedExercise.steps?.map((_, idx) => (
+                <div 
+                  key={idx} 
+                  className={`h-2 flex-1 rounded-full transition-all ${
+                    idx <= exerciseStep ? 'bg-[#A0D8E7]' : 'bg-gray-200'
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+          
+          <div className="mb-8 text-center">
+            <div className="w-32 h-32 mx-auto mb-6 rounded-full bg-gradient-to-br from-[#A0D8E7] to-[#C3B1E1] flex items-center justify-center">
+              <Wind className="w-16 h-16 text-white" />
+            </div>
+            <p className="text-2xl font-medium text-[#3A5A98] mb-4">
+              {selectedExercise.steps?.[exerciseStep]}
+            </p>
+            <p className="text-gray-600">
+              Siga as instruções com calma. Não há pressa.
+            </p>
+          </div>
+          
+          <div className="space-y-3">
+            <button
+              onClick={nextExerciseStep}
+              className="w-full bg-gradient-to-r from-[#A0D8E7] to-[#C3B1E1] text-white py-4 rounded-full font-medium hover:shadow-lg transition-all"
+            >
+              {exerciseStep < (selectedExercise.steps?.length || 0) - 1 ? "Próximo Passo" : "Concluir Exercício"}
+            </button>
+            
+            <button
+              onClick={() => {
+                setExerciseActive(false)
+                setSelectedExercise(null)
+              }}
+              className="w-full bg-gray-100 text-gray-600 py-4 rounded-full font-medium hover:bg-gray-200 transition-all"
+            >
+              Sair do Exercício
+            </button>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#A0D8E7]/20 via-white to-[#C3B1E1]/20">
       {/* Header */}
-      <header className="bg-white/90 backdrop-blur-md border-b border-[#A0D8E7]/30 sticky top-0 z-50 shadow-sm">
+      <header className="bg-white/80 backdrop-blur-sm border-b border-[#A0D8E7]/30 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
-            <button 
-              onClick={() => setCurrentView("home")}
-              className="flex items-center gap-3 hover:opacity-80 transition-opacity"
-            >
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#A0D8E7] to-[#C3B1E1] flex items-center justify-center shadow-lg">
-                <Sparkles className="w-5 h-5 text-white" />
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#A0D8E7] to-[#C3B1E1] flex items-center justify-center overflow-hidden">
+                <img 
+                  src="https://k6hrqrxuu8obbfwn.public.blob.vercel-storage.com/temp/cb3011f4-e48e-4c6d-b4ee-7e35611a1b6f.png" 
+                  alt="Serenar Logo" 
+                  className="w-full h-full object-cover"
+                />
               </div>
-              <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-[#3A5A98] to-[#7B9CC9] bg-clip-text text-transparent">
-                Serenar
-              </h1>
-            </button>
-            <button 
-              onClick={() => setMenuOpen(!menuOpen)}
-              className="sm:hidden p-2 rounded-lg hover:bg-[#A0D8E7]/20 transition-colors"
-            >
-              {menuOpen ? <X className="w-6 h-6 text-[#3A5A98]" /> : <Menu className="w-6 h-6 text-[#3A5A98]" />}
-            </button>
-            <nav className="hidden sm:flex gap-2">
-              {navigationItems.map(item => (
+              <h1 className="text-2xl sm:text-3xl font-bold text-[#3A5A98]">Serenar</h1>
+            </div>
+            
+            <div className="flex items-center gap-3">
+              {/* Botão de Perfil */}
+              {userProfile && (
                 <button
-                  key={item.id}
-                  onClick={() => setCurrentView(item.id)}
-                  className={`px-4 py-2 rounded-full transition-all flex items-center gap-2 ${
-                    currentView === item.id
-                      ? "bg-gradient-to-r from-[#A0D8E7] to-[#C3B1E1] text-white shadow-lg"
-                      : "text-[#3A5A98] hover:bg-[#A0D8E7]/20"
-                  }`}
+                  onClick={openProfileEdit}
+                  className="hidden sm:flex items-center gap-2 px-4 py-2 bg-[#B0EACD]/20 hover:bg-[#B0EACD]/30 rounded-full transition-all"
+                  title="Editar Perfil"
                 >
-                  <item.icon className="w-4 h-4" />
-                  <span className="text-sm font-medium">{item.label}</span>
+                  {userProfile.photo ? (
+                    <img 
+                      src={userProfile.photo} 
+                      alt="Perfil" 
+                      className="w-8 h-8 rounded-full object-cover"
+                    />
+                  ) : (
+                    <User className="w-5 h-5 text-[#3A5A98]" />
+                  )}
+                  <span className="text-sm font-medium text-[#3A5A98]">{userProfile.name}</span>
                 </button>
-              ))}
-            </nav>
+              )}
+              
+              {/* Botão de Emergência */}
+              <button
+                onClick={() => setShowEmergency(true)}
+                className="hidden sm:flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-full font-medium hover:shadow-lg transition-all animate-pulse"
+              >
+                <AlertCircle className="w-5 h-5" />
+                SOS - Preciso de Ajuda
+              </button>
+              
+              <button 
+                onClick={() => setMenuOpen(!menuOpen)}
+                className="sm:hidden p-2 rounded-lg hover:bg-[#A0D8E7]/20 transition-colors"
+              >
+                {menuOpen ? <X className="w-6 h-6 text-[#3A5A98]" /> : <Menu className="w-6 h-6 text-[#3A5A98]" />}
+              </button>
+            </div>
           </div>
+          
+          {/* Menu Mobile */}
           {menuOpen && (
-            <nav className="sm:hidden mt-4 flex flex-col gap-2 pb-2">
-              {navigationItems.map(item => (
+            <div className="sm:hidden mt-4 space-y-2 pb-2">
+              {userProfile && (
                 <button
-                  key={item.id}
                   onClick={() => {
-                    setCurrentView(item.id)
+                    openProfileEdit()
                     setMenuOpen(false)
                   }}
-                  className={`px-4 py-3 rounded-xl transition-all flex items-center gap-3 ${
-                    currentView === item.id
-                      ? "bg-gradient-to-r from-[#A0D8E7] to-[#C3B1E1] text-white shadow-lg"
-                      : "text-[#3A5A98] hover:bg-[#A0D8E7]/20"
-                  }`}
+                  className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-[#B0EACD]/20 rounded-full font-medium text-[#3A5A98]"
                 >
-                  <item.icon className="w-5 h-5" />
-                  <span className="font-medium">{item.label}</span>
+                  {userProfile.photo ? (
+                    <img 
+                      src={userProfile.photo} 
+                      alt="Perfil" 
+                      className="w-6 h-6 rounded-full object-cover"
+                    />
+                  ) : (
+                    <User className="w-5 h-5" />
+                  )}
+                  {userProfile.name}
                 </button>
-              ))}
-            </nav>
+              )}
+              <button
+                onClick={() => {
+                  setShowEmergency(true)
+                  setMenuOpen(false)
+                }}
+                className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-full font-medium"
+              >
+                <AlertCircle className="w-5 h-5" />
+                SOS - Preciso de Ajuda
+              </button>
+            </div>
           )}
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Onboarding View */}
-        {currentView === "onboarding" && (
-          <div className="max-w-2xl mx-auto">
-            <div className="bg-white rounded-3xl shadow-2xl p-8 border-2 border-[#A0D8E7]/30">
-              <div className="mb-8">
-                <div className="flex justify-between items-center mb-4">
-                  <span className="text-sm text-gray-500 font-medium">
-                    Passo {onboardingStep + 1} de {onboardingSteps.length}
-                  </span>
-                  <div className="flex gap-1">
-                    {onboardingSteps.map((_, i) => (
-                      <div
-                        key={i}
-                        className={`h-2 rounded-full transition-all duration-300 ${
-                          i <= onboardingStep ? "w-8 bg-gradient-to-r from-[#A0D8E7] to-[#C3B1E1]" : "w-2 bg-gray-200"
-                        }`}
-                      />
-                    ))}
-                  </div>
-                </div>
-                <h2 className="text-3xl font-bold text-[#3A5A98] mb-2">
-                  {onboardingSteps[onboardingStep].title}
-                </h2>
-                <p className="text-gray-600 leading-relaxed">
-                  {onboardingSteps[onboardingStep].subtitle}
-                </p>
-              </div>
+      {/* Navegação Rápida */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          {[
+            { view: "home", icon: Heart, label: "Início" },
+            { view: "calendar", icon: Calendar, label: "Calendário" },
+            { view: "exercises", icon: Wind, label: "Exercícios" },
+            { view: "community", icon: Users, label: "Comunidade" },
+            { view: "learning", icon: Play, label: "Aprender" }
+          ].map(({ view, icon: Icon, label }) => (
+            <button
+              key={view}
+              onClick={() => setCurrentView(view as any)}
+              className={`p-4 rounded-2xl transition-all ${
+                currentView === view 
+                  ? 'bg-[#A0D8E7] text-white shadow-lg scale-105' 
+                  : 'bg-white hover:shadow-md text-gray-700'
+              }`}
+            >
+              <Icon className="w-6 h-6 mx-auto mb-2" />
+              <span className="text-sm font-medium">{label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
 
-              {onboardingSteps[onboardingStep].content}
-
-              <div className="flex gap-3 mt-8">
-                {onboardingStep > 0 && (
-                  <button
-                    onClick={() => setOnboardingStep(onboardingStep - 1)}
-                    className="px-6 py-3 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 transition-all font-medium"
-                  >
-                    Voltar
-                  </button>
-                )}
-                <button
-                  onClick={() => {
-                    if (onboardingStep < onboardingSteps.length - 1) {
-                      setOnboardingStep(onboardingStep + 1)
-                    } else {
-                      setCurrentView("home")
-                    }
-                  }}
-                  className="flex-1 px-6 py-3 rounded-full bg-gradient-to-r from-[#A0D8E7] to-[#C3B1E1] text-white hover:shadow-xl transition-all font-medium"
-                >
-                  {onboardingStep === onboardingSteps.length - 1 ? "Começar minha jornada" : "Continuar"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Home View */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
         {currentView === "home" && (
           <>
             {/* Welcome Section */}
             <section className="mb-8 text-center">
               <h2 className="text-3xl sm:text-4xl font-bold text-[#3A5A98] mb-3">
-                Olá! Como você está hoje?
+                Como você está hoje, {userProfile?.name}?
               </h2>
-              <p className="text-gray-600 text-lg max-w-2xl mx-auto leading-relaxed">
-                Este é o seu espaço seguro. Vamos cuidar da sua mente juntos, um passo de cada vez. 💙
+              <p className="text-gray-600 text-lg">
+                Vamos registrar juntos. Leva menos de 10 segundos.
               </p>
-            </section>
-
-            {/* Quick Actions - 2 toques para qualquer função */}
-            <section className="mb-8 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <button
-                onClick={() => setCurrentView("monitor")}
-                className="p-6 bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 border-2 border-[#A0D8E7]/30 text-left group hover:scale-105"
-              >
-                <Activity className="w-10 h-10 text-[#A0D8E7] mb-3 group-hover:scale-110 transition-transform" />
-                <h3 className="font-bold text-[#3A5A98] mb-1 text-lg">Registrar Agora</h3>
-                <p className="text-sm text-gray-600">Como você está? (10 segundos)</p>
-              </button>
-
-              <button
-                onClick={() => setCurrentView("diary")}
-                className="p-6 bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 border-2 border-[#C3B1E1]/30 text-left group hover:scale-105"
-              >
-                <BookOpen className="w-10 h-10 text-[#C3B1E1] mb-3 group-hover:scale-110 transition-transform" />
-                <h3 className="font-bold text-[#3A5A98] mb-1 text-lg">Diário com IA</h3>
-                <p className="text-sm text-gray-600">Escreva e receba insights</p>
-              </button>
-
-              <button
-                onClick={() => setCurrentView("exercises")}
-                className="p-6 bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 border-2 border-[#B0EACD]/30 text-left group hover:scale-105"
-              >
-                <Wind className="w-10 h-10 text-[#B0EACD] mb-3 group-hover:scale-110 transition-transform" />
-                <h3 className="font-bold text-[#3A5A98] mb-1 text-lg">Exercícios</h3>
-                <p className="text-sm text-gray-600">Respiração, meditação e mais</p>
-              </button>
-
-              <button
-                onClick={() => setCurrentView("emergency")}
-                className="p-6 bg-gradient-to-br from-[#3A5A98] to-[#7B9CC9] rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 text-left group text-white hover:scale-105"
-              >
-                <AlertCircle className="w-10 h-10 mb-3 group-hover:scale-110 transition-transform animate-pulse" />
-                <h3 className="font-bold mb-1 text-lg">SOS Emocional</h3>
-                <p className="text-sm opacity-90">Socorro imediato para crises</p>
-              </button>
-            </section>
-
-            {/* Alert if anxiety pattern detected */}
-            <section className="mb-8 bg-gradient-to-r from-[#3A5A98]/10 to-[#7B9CC9]/10 border-l-4 border-[#3A5A98] rounded-2xl p-6">
-              <div className="flex items-start gap-4">
-                <Brain className="w-6 h-6 text-[#3A5A98] mt-1 flex-shrink-0" />
-                <div>
-                  <h4 className="font-bold text-[#3A5A98] mb-2">💡 Alerta de bem-estar</h4>
-                  <p className="text-sm text-gray-700 mb-3">
-                    Percebi que sua ansiedade aumentou nos últimos 3 dias. Que tal fazer uma pausa agora e praticar um exercício de respiração?
+              {!canFillAnamnesis && (
+                <div className="mt-4 p-4 bg-[#B0EACD]/20 rounded-2xl inline-block">
+                  <p className="text-sm text-[#3A5A98] font-medium">
+                    ✅ Você já preencheu a anamnese hoje! Volte amanhã para um novo registro.
                   </p>
-                  <button
-                    onClick={() => setCurrentView("exercises")}
-                    className="text-sm text-[#3A5A98] font-bold hover:underline flex items-center gap-1"
-                  >
-                    Ver exercícios recomendados <ChevronRight className="w-4 h-4" />
-                  </button>
                 </div>
-              </div>
+              )}
             </section>
 
-            {/* Progress Overview */}
-            <section className="mb-8 bg-white rounded-3xl shadow-xl p-6 sm:p-8 border-2 border-[#B0EACD]/30">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-3">
-                  <TrendingUp className="w-6 h-6 text-[#3A5A98]" />
-                  <h3 className="text-2xl font-bold text-[#3A5A98]">Sua Evolução</h3>
+            {/* Monitoramento Rápido */}
+            <section className="mb-8 bg-white rounded-3xl shadow-lg p-6 sm:p-8 border border-[#A0D8E7]/30">
+              <div className="space-y-6">
+                {/* Humor */}
+                <div>
+                  <h3 className="text-lg font-bold text-[#3A5A98] mb-4">Seu humor agora</h3>
+                  <div className="grid grid-cols-5 gap-2 sm:gap-3">
+                    {moods.map((mood) => (
+                      <button
+                        key={mood.label}
+                        onClick={() => {
+                          if (canFillAnamnesis) {
+                            setSelectedMood(mood.label)
+                            setAnxietyLevel(mood.value)
+                          }
+                        }}
+                        disabled={!canFillAnamnesis}
+                        className={`p-3 rounded-2xl transition-all ${
+                          selectedMood === mood.label ? `${mood.color} shadow-lg scale-105` : 'bg-gray-50 hover:bg-gray-100'
+                        } ${!canFillAnamnesis ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        <div className="text-3xl mb-1">{mood.emoji}</div>
+                        <div className="text-xs font-medium">{mood.label}</div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <button
-                  onClick={() => setCurrentView("calendar")}
-                  className="text-sm text-[#3A5A98] hover:underline flex items-center gap-1 font-medium"
-                >
-                  Ver detalhes
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="grid sm:grid-cols-3 gap-6">
-                <div className="text-center p-6 bg-gradient-to-br from-[#B0EACD]/30 to-[#B0EACD]/10 rounded-2xl border border-[#B0EACD]/30">
-                  <div className="text-4xl font-bold text-[#3A5A98] mb-2">7</div>
-                  <div className="text-sm text-gray-600 font-medium">Dias consecutivos</div>
-                  <div className="text-xs text-gray-500 mt-1">Continue assim! 🎉</div>
-                </div>
-                <div className="text-center p-6 bg-gradient-to-br from-[#A0D8E7]/30 to-[#A0D8E7]/10 rounded-2xl border border-[#A0D8E7]/30">
-                  <div className="text-4xl font-bold text-[#3A5A98] mb-2">24</div>
-                  <div className="text-sm text-gray-600 font-medium">Exercícios realizados</div>
-                  <div className="text-xs text-gray-500 mt-1">Você está indo bem!</div>
-                </div>
-                <div className="text-center p-6 bg-gradient-to-br from-[#C3B1E1]/30 to-[#C3B1E1]/10 rounded-2xl border border-[#C3B1E1]/30">
-                  <div className="text-4xl font-bold text-[#3A5A98] mb-2">12</div>
-                  <div className="text-sm text-gray-600 font-medium">Registros no diário</div>
-                  <div className="text-xs text-gray-500 mt-1">Autoconhecimento crescendo</div>
-                </div>
-              </div>
-            </section>
 
-            {/* Weekly Plan */}
-            <section className="mb-8 bg-gradient-to-br from-[#A0D8E7]/30 to-[#C3B1E1]/30 rounded-3xl shadow-xl p-6 sm:p-8 border-2 border-[#A0D8E7]/50">
-              <div className="flex items-center gap-3 mb-6">
-                <Target className="w-6 h-6 text-[#3A5A98]" />
-                <h3 className="text-2xl font-bold text-[#3A5A98]">Plano da Semana</h3>
-              </div>
-              <div className="space-y-3">
-                <div className="flex items-center gap-3 p-4 bg-white/70 rounded-2xl hover:bg-white/90 transition-all">
-                  <CheckCircle className="w-5 h-5 text-[#B0EACD] flex-shrink-0" />
-                  <span className="flex-1 text-gray-700 font-medium">3 exercícios de respiração</span>
-                  <span className="text-sm font-bold text-[#3A5A98] bg-[#B0EACD]/20 px-3 py-1 rounded-full">2/3</span>
-                </div>
-                <div className="flex items-center gap-3 p-4 bg-white/70 rounded-2xl hover:bg-white/90 transition-all">
-                  <CheckCircle className="w-5 h-5 text-[#B0EACD] flex-shrink-0" />
-                  <span className="flex-1 text-gray-700 font-medium">2 meditações guiadas</span>
-                  <span className="text-sm font-bold text-[#3A5A98] bg-[#A0D8E7]/20 px-3 py-1 rounded-full">1/2</span>
-                </div>
-                <div className="flex items-center gap-3 p-4 bg-white/70 rounded-2xl hover:bg-white/90 transition-all">
-                  <div className="w-5 h-5 rounded-full border-2 border-gray-300 flex-shrink-0" />
-                  <span className="flex-1 text-gray-700 font-medium">1 diário emocional</span>
-                  <span className="text-sm font-bold text-gray-400 bg-gray-100 px-3 py-1 rounded-full">0/1</span>
-                </div>
-              </div>
-            </section>
-
-            {/* AI Assistant Card */}
-            <section className="bg-gradient-to-br from-[#3A5A98] to-[#7B9CC9] rounded-3xl shadow-2xl p-6 sm:p-8 text-white">
-              <div className="flex items-center gap-3 mb-4">
-                <MessageCircle className="w-7 h-7" />
-                <h3 className="text-2xl font-bold">Médico Amigo</h3>
-              </div>
-              <p className="mb-6 opacity-90 leading-relaxed">
-                Precisa conversar agora? Estou aqui para te ouvir, acolher e ajudar você a encontrar clareza. Sem julgamentos, apenas apoio.
-              </p>
-              <button
-                onClick={() => setCurrentView("chat")}
-                className="w-full bg-white text-[#3A5A98] py-4 rounded-full font-bold hover:shadow-2xl transition-all duration-300 hover:scale-105"
-              >
-                Conversar Agora
-              </button>
-            </section>
-          </>
-        )}
-
-        {/* Monitor View */}
-        {currentView === "monitor" && (
-          <div className="max-w-4xl mx-auto">
-            <div className="mb-6">
-              <button
-                onClick={() => setCurrentView("home")}
-                className="text-[#3A5A98] hover:underline flex items-center gap-1 mb-4 font-medium"
-              >
-                ← Voltar
-              </button>
-              <h2 className="text-3xl font-bold text-[#3A5A98] mb-2">Registro Rápido</h2>
-              <p className="text-gray-600">Leva menos de 10 segundos. Como você está agora?</p>
-            </div>
-
-            <div className="space-y-6">
-              {/* Mood Selection */}
-              <section className="bg-white rounded-3xl shadow-xl p-6 sm:p-8 border-2 border-[#A0D8E7]/30">
-                <h3 className="text-xl font-bold text-[#3A5A98] mb-5">Como você está se sentindo?</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                  {moods.map((mood) => (
-                    <button
-                      key={mood.label}
-                      onClick={() => setSelectedMood(mood.label)}
-                      className={`p-5 rounded-2xl transition-all duration-300 hover:scale-105 ${
-                        selectedMood === mood.label
-                          ? `${mood.color} shadow-2xl scale-105`
-                          : "bg-gray-50 hover:bg-gray-100"
-                      }`}
-                    >
-                      <div className="text-5xl mb-2">{mood.emoji}</div>
-                      <div className={`text-sm font-bold ${selectedMood === mood.label && mood.color.includes('3A5A98') ? 'text-white' : 'text-gray-700'}`}>
-                        {mood.label}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </section>
-
-              {/* Anxiety Level */}
-              <section className="bg-white rounded-3xl shadow-xl p-6 sm:p-8 border-2 border-[#C3B1E1]/30">
-                <h3 className="text-xl font-bold text-[#3A5A98] mb-5">Nível de ansiedade agora</h3>
-                <div className="space-y-4">
+                {/* Nível de Ansiedade */}
+                <div>
+                  <div className="flex justify-between mb-2">
+                    <h3 className="text-lg font-bold text-[#3A5A98]">Ansiedade (1-10)</h3>
+                    <span className="text-2xl font-bold text-[#3A5A98]">{anxietyLevel}</span>
+                  </div>
                   <input
                     type="range"
                     min="1"
                     max="10"
                     value={anxietyLevel}
-                    onChange={(e) => setAnxietyLevel(Number(e.target.value))}
-                    className="w-full h-3 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#A0D8E7]"
+                    onChange={(e) => canFillAnamnesis && setAnxietyLevel(Number(e.target.value))}
+                    disabled={!canFillAnamnesis}
+                    className="w-full h-3 bg-gradient-to-r from-[#B0EACD] via-[#A0D8E7] to-[#3A5A98] rounded-full appearance-none cursor-pointer disabled:opacity-50"
                   />
-                  <div className="flex justify-between text-sm text-gray-600">
-                    <span>1 - Calmo</span>
-                    <div className="text-center">
-                      <div className="text-4xl font-bold text-[#3A5A98] mb-1">{anxietyLevel}</div>
-                      <div className="text-xs text-gray-500">
-                        {anxietyLevel <= 3 ? "Você está bem" : anxietyLevel <= 6 ? "Ansiedade moderada" : "Ansiedade elevada"}
-                      </div>
-                    </div>
-                    <span>10 - Muito ansioso</span>
+                  <div className="flex justify-between text-xs text-gray-500 mt-1">
+                    <span>Tranquilo</span>
+                    <span>Muito ansioso</span>
                   </div>
                 </div>
-              </section>
 
-              {/* Triggers */}
-              <section className="bg-white rounded-3xl shadow-xl p-6 sm:p-8 border-2 border-[#B0EACD]/30">
-                <h3 className="text-xl font-bold text-[#3A5A98] mb-5">Gatilhos percebidos (opcional)</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {triggersList.map(trigger => (
-                    <button
-                      key={trigger}
-                      onClick={() => {
-                        setTriggers(prev => 
-                          prev.includes(trigger) ? prev.filter(t => t !== trigger) : [...prev, trigger]
-                        )
-                      }}
-                      className={`p-3 rounded-xl text-sm transition-all duration-300 ${
-                        triggers.includes(trigger)
-                          ? "bg-[#B0EACD] text-[#3A5A98] shadow-lg scale-105 font-bold"
-                          : "bg-gray-50 hover:bg-gray-100"
-                      }`}
-                    >
-                      {trigger}
-                    </button>
-                  ))}
-                </div>
-              </section>
-
-              {/* Physical Symptoms */}
-              <section className="bg-white rounded-3xl shadow-xl p-6 sm:p-8 border-2 border-[#C3B1E1]/30">
-                <h3 className="text-xl font-bold text-[#3A5A98] mb-5">Sintomas físicos (opcional)</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  {symptomsList.map(symptom => (
-                    <button
-                      key={symptom}
-                      onClick={() => {
-                        setSymptoms(prev => 
-                          prev.includes(symptom) ? prev.filter(s => s !== symptom) : [...prev, symptom]
-                        )
-                      }}
-                      className={`p-3 rounded-xl text-sm transition-all duration-300 ${
-                        symptoms.includes(symptom)
-                          ? "bg-[#C3B1E1] text-white shadow-lg scale-105 font-bold"
-                          : "bg-gray-50 hover:bg-gray-100"
-                      }`}
-                    >
-                      {symptom}
-                    </button>
-                  ))}
-                </div>
-              </section>
-
-              {/* Quick Notes */}
-              <section className="bg-white rounded-3xl shadow-xl p-6 sm:p-8 border-2 border-[#A0D8E7]/30">
-                <h3 className="text-xl font-bold text-[#3A5A98] mb-4">Observações (opcional)</h3>
-                <textarea
-                  value={quickNotes}
-                  onChange={(e) => setQuickNotes(e.target.value)}
-                  placeholder="O que aconteceu? Como você reagiu? Qualquer coisa que queira lembrar..."
-                  className="w-full h-32 p-4 border-2 border-[#A0D8E7]/30 rounded-2xl focus:outline-none focus:border-[#A0D8E7] transition-colors resize-none"
-                />
-              </section>
-
-              <button 
-                onClick={saveMonitoring}
-                className="w-full bg-gradient-to-r from-[#A0D8E7] to-[#C3B1E1] text-white py-5 rounded-full font-bold text-lg hover:shadow-2xl transition-all duration-300 hover:scale-105"
-              >
-                Salvar Registro
-              </button>
-
-              {/* Alert Example */}
-              {anxietyLevel >= 7 && (
-                <div className="bg-gradient-to-r from-[#3A5A98]/10 to-[#7B9CC9]/10 border-l-4 border-[#3A5A98] p-6 rounded-2xl">
-                  <div className="flex items-start gap-3">
-                    <AlertCircle className="w-6 h-6 text-[#3A5A98] mt-0.5 flex-shrink-0" />
-                    <div>
-                      <h4 className="font-bold text-[#3A5A98] mb-2">⚠️ Sua ansiedade está elevada</h4>
-                      <p className="text-sm text-gray-700 mb-3">
-                        Que tal fazer uma pausa agora? Um exercício de respiração pode ajudar muito a acalmar.
-                      </p>
+                {/* Gatilhos */}
+                <div>
+                  <h3 className="text-lg font-bold text-[#3A5A98] mb-3">O que pode ter causado?</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {triggers.map((trigger) => (
                       <button
-                        onClick={() => setCurrentView("exercises")}
-                        className="text-sm text-[#3A5A98] font-bold hover:underline flex items-center gap-1"
+                        key={trigger}
+                        onClick={() => {
+                          if (canFillAnamnesis) {
+                            setSelectedTriggers(prev =>
+                              prev.includes(trigger) ? prev.filter(t => t !== trigger) : [...prev, trigger]
+                            )
+                          }
+                        }}
+                        disabled={!canFillAnamnesis}
+                        className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                          selectedTriggers.includes(trigger)
+                            ? 'bg-[#C3B1E1] text-white shadow-md'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        } ${!canFillAnamnesis ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
-                        Ver exercícios recomendados <ChevronRight className="w-4 h-4" />
+                        {trigger}
                       </button>
-                    </div>
+                    ))}
                   </div>
                 </div>
-              )}
-            </div>
-          </div>
-        )}
 
-        {/* Diary View */}
-        {currentView === "diary" && (
-          <div className="max-w-4xl mx-auto">
-            <div className="mb-6">
-              <button
-                onClick={() => setCurrentView("home")}
-                className="text-[#3A5A98] hover:underline flex items-center gap-1 mb-4 font-medium"
-              >
-                ← Voltar
-              </button>
-              <h2 className="text-3xl font-bold text-[#3A5A98] mb-2">Diário Emocional com IA</h2>
-              <p className="text-gray-600">Escreva livremente. A IA vai te ajudar a entender seus padrões e emoções.</p>
-            </div>
+                {/* Sintomas */}
+                <div>
+                  <h3 className="text-lg font-bold text-[#3A5A98] mb-3">Sintomas físicos</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {symptoms.map((symptom) => (
+                      <button
+                        key={symptom}
+                        onClick={() => {
+                          if (canFillAnamnesis) {
+                            setSelectedSymptoms(prev =>
+                              prev.includes(symptom) ? prev.filter(s => s !== symptom) : [...prev, symptom]
+                            )
+                          }
+                        }}
+                        disabled={!canFillAnamnesis}
+                        className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                          selectedSymptoms.includes(symptom)
+                            ? 'bg-[#B0EACD] text-[#3A5A98] shadow-md'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        } ${!canFillAnamnesis ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        {symptom}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-            <div className="space-y-6">
-              <section className="bg-white rounded-3xl shadow-xl p-6 sm:p-8 border-2 border-[#C3B1E1]/30">
-                <h3 className="text-xl font-bold text-[#3A5A98] mb-4">O que está passando pela sua mente?</h3>
-                <p className="text-sm text-gray-600 mb-4">
-                  Não há julgamento aqui. Escreva seus pensamentos, sentimentos, medos ou preocupações. Este é o seu espaço seguro.
-                </p>
+                {/* Observações */}
+                <div>
+                  <h3 className="text-lg font-bold text-[#3A5A98] mb-3">Observações (opcional)</h3>
+                  <textarea
+                    value={quickNotes}
+                    onChange={(e) => canFillAnamnesis && setQuickNotes(e.target.value)}
+                    disabled={!canFillAnamnesis}
+                    placeholder="Algo mais que queira registrar..."
+                    className="w-full h-20 p-4 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-[#A0D8E7] transition-colors resize-none disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+
+                <button
+                  onClick={saveMoodEntry}
+                  disabled={!selectedMood || !canFillAnamnesis}
+                  className="w-full bg-gradient-to-r from-[#A0D8E7] to-[#C3B1E1] text-white py-4 rounded-full font-medium hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {canFillAnamnesis ? "Salvar Registro" : "Já preenchido hoje"}
+                </button>
+              </div>
+            </section>
+
+            <div className="grid lg:grid-cols-2 gap-8 mb-8">
+              {/* Diário com IA */}
+              <section className="bg-white rounded-3xl shadow-lg p-6 sm:p-8 border border-[#C3B1E1]/30">
+                <div className="flex items-center gap-3 mb-6">
+                  <BookOpen className="w-6 h-6 text-[#3A5A98]" />
+                  <h3 className="text-2xl font-bold text-[#3A5A98]">Diário Emocional</h3>
+                </div>
+                <p className="text-gray-600 mb-4">Escreva livremente. A IA vai ajudar você a entender padrões.</p>
                 <textarea
                   value={diaryEntry}
                   onChange={(e) => setDiaryEntry(e.target.value)}
-                  placeholder="Hoje eu me senti...&#10;&#10;O que me deixou ansioso foi...&#10;&#10;Eu gostaria de..."
-                  className="w-full h-80 p-5 border-2 border-[#C3B1E1]/30 rounded-2xl focus:outline-none focus:border-[#C3B1E1] transition-colors resize-none text-gray-700 leading-relaxed"
+                  placeholder="Como foi seu dia? O que você sentiu? O que te preocupa?"
+                  className="w-full h-40 p-4 border-2 border-[#C3B1E1]/30 rounded-2xl focus:outline-none focus:border-[#C3B1E1] transition-colors resize-none"
                 />
                 <div className="flex gap-3 mt-4">
-                  <button 
-                    onClick={saveDiary}
-                    className="flex-1 bg-gradient-to-r from-[#C3B1E1] to-[#A0D8E7] text-white py-4 rounded-full font-bold hover:shadow-2xl transition-all duration-300 hover:scale-105"
+                  <button
+                    onClick={analyzeDiary}
+                    className="flex-1 bg-gradient-to-r from-[#C3B1E1] to-[#A0D8E7] text-white py-3 rounded-full font-medium hover:shadow-lg transition-all"
                   >
-                    Salvar e Analisar com IA
+                    <Brain className="w-5 h-5 inline mr-2" />
+                    Analisar com IA
                   </button>
-                  <button 
+                  <button
                     onClick={exportDiaryPDF}
-                    className="px-6 py-4 bg-gray-100 text-gray-700 rounded-full font-bold hover:bg-gray-200 transition-all flex items-center gap-2"
+                    className="px-6 py-3 bg-gray-100 text-[#3A5A98] rounded-full font-medium hover:shadow-md transition-all"
                   >
                     <Download className="w-5 h-5" />
-                    PDF
                   </button>
                 </div>
+                
+                {showDiaryAnalysis && diaryInsights.length > 0 && (
+                  <div className="mt-6 p-4 bg-[#C3B1E1]/10 rounded-2xl space-y-3">
+                    <h4 className="font-bold text-[#3A5A98] mb-2">Insights da IA:</h4>
+                    {diaryInsights.map((insight, idx) => (
+                      <div key={idx} className="flex gap-2">
+                        <Sparkles className="w-5 h-5 text-[#C3B1E1] flex-shrink-0 mt-0.5" />
+                        <p className="text-sm text-gray-700">{insight}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </section>
 
-              {/* AI Insights Example */}
-              {diaryEntry.length > 50 && (
-                <section className="bg-gradient-to-br from-[#A0D8E7]/20 to-[#C3B1E1]/20 rounded-3xl shadow-xl p-6 sm:p-8 border-2 border-[#A0D8E7]/50">
-                  <div className="flex items-center gap-3 mb-5">
-                    <Brain className="w-7 h-7 text-[#3A5A98]" />
-                    <h3 className="text-xl font-bold text-[#3A5A98]">💡 Insights da IA</h3>
-                  </div>
-                  <div className="space-y-4">
-                    <div className="bg-white/70 p-5 rounded-2xl">
-                      <h4 className="font-bold text-[#3A5A98] mb-3 flex items-center gap-2">
-                        <Zap className="w-5 h-5" />
-                        Gatilhos identificados
-                      </h4>
-                      <div className="flex flex-wrap gap-2">
-                        <span className="px-4 py-2 bg-[#B0EACD]/40 text-[#3A5A98] rounded-full text-sm font-bold">Trabalho</span>
-                        <span className="px-4 py-2 bg-[#A0D8E7]/40 text-[#3A5A98] rounded-full text-sm font-bold">Pressão</span>
-                        <span className="px-4 py-2 bg-[#C3B1E1]/40 text-[#3A5A98] rounded-full text-sm font-bold">Prazos</span>
-                      </div>
-                    </div>
-                    <div className="bg-white/70 p-5 rounded-2xl">
-                      <h4 className="font-bold text-[#3A5A98] mb-3 flex items-center gap-2">
-                        <Heart className="w-5 h-5" />
-                        Sugestão personalizada
-                      </h4>
-                      <p className="text-sm text-gray-700 leading-relaxed">
-                        Percebi que você está se sentindo sobrecarregado com prazos. Isso é muito comum e você não está sozinho. Que tal fazer uma pausa agora e praticar a técnica de respiração 4-7-8? Ela pode ajudar a reduzir a pressão que você está sentindo.
-                      </p>
-                      <button
-                        onClick={() => {
-                          setCurrentView("exercises")
-                          setSelectedExercise("4-7-8")
-                        }}
-                        className="mt-3 text-sm text-[#3A5A98] font-bold hover:underline flex items-center gap-1"
-                      >
-                        Fazer exercício agora <ChevronRight className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <div className="bg-white/70 p-5 rounded-2xl">
-                      <h4 className="font-bold text-[#3A5A98] mb-3 flex items-center gap-2">
-                        <TrendingUp className="w-5 h-5" />
-                        Padrão observado
-                      </h4>
-                      <p className="text-sm text-gray-700 leading-relaxed">
-                        Nos últimos 7 dias, você mencionou "trabalho" 5 vezes como fonte de ansiedade. Considere conversar com alguém sobre isso ou buscar estratégias para gerenciar melhor essa área da sua vida.
-                      </p>
-                    </div>
-                  </div>
-                </section>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Exercises View */}
-        {currentView === "exercises" && (
-          <div className="max-w-4xl mx-auto">
-            <div className="mb-6">
-              <button
-                onClick={() => {
-                  setCurrentView("home")
-                  setSelectedExercise(null)
-                }}
-                className="text-[#3A5A98] hover:underline flex items-center gap-1 mb-4 font-medium"
-              >
-                ← Voltar
-              </button>
-              <h2 className="text-3xl font-bold text-[#3A5A98] mb-2">Exercícios Guiados</h2>
-              <p className="text-gray-600">Escolha um exercício e deixe-se guiar. Tudo com instruções claras.</p>
-            </div>
-
-            {selectedExercise ? (
-              <div className="bg-white rounded-3xl shadow-2xl p-8 border-2 border-[#A0D8E7]/30">
-                <button
-                  onClick={() => {
-                    setSelectedExercise(null)
-                    setExerciseRunning(false)
-                    setExerciseTimer(0)
-                    setGroundingStep(0)
-                  }}
-                  className="text-[#3A5A98] hover:underline flex items-center gap-1 mb-6 font-medium"
-                >
-                  ← Voltar aos exercícios
-                </button>
-                
-                <div className="text-center">
-                  <h3 className="text-3xl font-bold text-[#3A5A98] mb-4">
-                    {exercises.find(e => e.id === selectedExercise)?.name}
-                  </h3>
-                  <p className="text-gray-600 mb-8 text-lg leading-relaxed max-w-2xl mx-auto">
-                    {exercises.find(e => e.id === selectedExercise)?.description}
-                  </p>
-
-                  {selectedExercise === "grounding" ? (
-                    // Grounding 5-4-3-2-1 Interactive
-                    <div className="max-w-2xl mx-auto">
-                      <div className="mb-8">
-                        <div className="flex justify-center gap-2 mb-6">
-                          {groundingSteps.map((_, i) => (
-                            <div
-                              key={i}
-                              className={`h-3 w-3 rounded-full transition-all ${
-                                i <= groundingStep ? "bg-[#A0D8E7] scale-125" : "bg-gray-200"
-                              }`}
-                            />
-                          ))}
-                        </div>
-                        
-                        <div className="bg-gradient-to-br from-[#A0D8E7]/20 to-[#C3B1E1]/20 rounded-3xl p-8 border-2 border-[#A0D8E7]/30">
-                          {(() => {
-                            const step = groundingSteps[groundingStep]
-                            const Icon = step.icon
-                            return (
-                              <>
-                                <Icon className="w-16 h-16 text-[#3A5A98] mx-auto mb-4" />
-                                <h4 className="text-2xl font-bold text-[#3A5A98] mb-4">{step.title}</h4>
-                                <p className="text-gray-700 text-lg mb-6">{step.prompt}</p>
-                                <div className="space-y-2 text-left">
-                                  {step.examples.map((example, i) => (
-                                    <div key={i} className="p-3 bg-white/60 rounded-xl text-gray-600 text-sm">
-                                      • {example}
-                                    </div>
-                                  ))}
-                                </div>
-                              </>
-                            )
-                          })()}
-                        </div>
-                      </div>
-
-                      <div className="flex gap-3 justify-center">
-                        {groundingStep > 0 && (
-                          <button
-                            onClick={() => setGroundingStep(groundingStep - 1)}
-                            className="px-8 py-4 bg-gray-100 text-gray-700 rounded-full font-bold hover:bg-gray-200 transition-all"
-                          >
-                            Anterior
-                          </button>
-                        )}
-                        {groundingStep < groundingSteps.length - 1 ? (
-                          <button
-                            onClick={() => setGroundingStep(groundingStep + 1)}
-                            className="px-8 py-4 bg-gradient-to-r from-[#A0D8E7] to-[#B0EACD] text-white rounded-full font-bold hover:shadow-2xl transition-all"
-                          >
-                            Próximo
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              alert("Exercício concluído! Como você está se sentindo agora? 💙")
-                              setSelectedExercise(null)
-                              setGroundingStep(0)
-                            }}
-                            className="px-8 py-4 bg-gradient-to-r from-[#B0EACD] to-[#A0D8E7] text-white rounded-full font-bold hover:shadow-2xl transition-all"
-                          >
-                            Concluir
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    // Timer-based exercises
-                    <>
-                      <div className={`w-72 h-72 mx-auto mb-8 rounded-full bg-gradient-to-br from-[#A0D8E7] to-[#C3B1E1] flex items-center justify-center shadow-2xl transition-all duration-1000 ${
-                        exerciseRunning ? getBreathingScale() : ""
-                      }`}>
-                        <div className="text-white text-center">
-                          <div className="text-6xl font-bold mb-2">
-                            {exerciseTimer > 0 ? formatTime(exerciseTimer) : "00:00"}
-                          </div>
-                          {exerciseRunning && (
-                            <div className="text-lg opacity-90">
-                              {selectedExercise?.includes("box") || selectedExercise?.includes("4-7-8") 
-                                ? getBreathingText() 
-                                : "Respire naturalmente"}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex gap-4 justify-center mb-8">
-                        {exerciseTimer === 0 ? (
-                          <button
-                            onClick={() => startExercise(exercises.find(e => e.id === selectedExercise)?.duration || 60)}
-                            className="px-10 py-4 bg-gradient-to-r from-[#A0D8E7] to-[#B0EACD] text-white rounded-full font-bold hover:shadow-2xl transition-all flex items-center gap-2 text-lg"
-                          >
-                            <Play className="w-6 h-6" />
-                            Iniciar
-                          </button>
-                        ) : (
-                          <button
-                            onClick={toggleExercise}
-                            className="px-10 py-4 bg-gradient-to-r from-[#A0D8E7] to-[#B0EACD] text-white rounded-full font-bold hover:shadow-2xl transition-all flex items-center gap-2 text-lg"
-                          >
-                            {exerciseRunning ? (
-                              <>
-                                <Pause className="w-6 h-6" />
-                                Pausar
-                              </>
-                            ) : (
-                              <>
-                                <Play className="w-6 h-6" />
-                                Continuar
-                              </>
-                            )}
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Instructions */}
-                      <div className="bg-[#A0D8E7]/10 rounded-2xl p-6 text-left max-w-xl mx-auto">
-                        <h4 className="font-bold text-[#3A5A98] mb-3 text-lg">📋 Como fazer:</h4>
-                        <ol className="space-y-2">
-                          {exercises.find(e => e.id === selectedExercise)?.instructions.map((instruction, i) => (
-                            <li key={i} className="text-sm text-gray-700 flex gap-2">
-                              <span className="font-bold text-[#3A5A98]">{i + 1}.</span>
-                              <span>{instruction}</span>
-                            </li>
-                          ))}
-                        </ol>
-                      </div>
-
-                      {exerciseTimer === 0 && !exerciseRunning && selectedExercise && (
-                        <div className="mt-8 p-6 bg-[#B0EACD]/20 rounded-2xl max-w-xl mx-auto">
-                          <p className="text-[#3A5A98] font-bold mb-4 text-lg">Este exercício ajudou você?</p>
-                          <div className="flex gap-3 justify-center">
-                            <button 
-                              onClick={() => alert("Ótimo! Vou recomendar mais exercícios assim para você. 💙")}
-                              className="px-8 py-3 bg-[#B0EACD] text-white rounded-full hover:shadow-xl transition-all font-bold"
-                            >
-                              Sim, ajudou muito!
-                            </button>
-                            <button 
-                              onClick={() => alert("Entendo. Vou sugerir outros exercícios que podem funcionar melhor para você.")}
-                              className="px-8 py-3 bg-gray-200 text-gray-700 rounded-full hover:bg-gray-300 transition-all font-bold"
-                            >
-                              Não desta vez
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  )}
+              {/* Progresso e Conquistas */}
+              <section className="bg-white rounded-3xl shadow-lg p-6 sm:p-8 border border-[#B0EACD]/30">
+                <div className="flex items-center gap-3 mb-6">
+                  <Award className="w-6 h-6 text-[#3A5A98]" />
+                  <h3 className="text-2xl font-bold text-[#3A5A98]">Sua Jornada</h3>
                 </div>
-              </div>
-            ) : (
-              <div className="space-y-8">
-                {/* Breathing Exercises */}
-                <section>
-                  <div className="flex items-center gap-3 mb-5">
-                    <Wind className="w-6 h-6 text-[#A0D8E7]" />
-                    <h3 className="text-2xl font-bold text-[#3A5A98]">Respiração</h3>
+                
+                <div className="mb-6 p-4 bg-gradient-to-r from-[#B0EACD]/20 to-[#A0D8E7]/20 rounded-2xl">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm text-gray-600">Sequência atual</span>
+                    <span className="text-3xl font-bold text-[#3A5A98]">{streak} dias</span>
                   </div>
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    {exercises.filter(e => e.category === "Respiração").map(exercise => (
-                      <button
-                        key={exercise.id}
-                        onClick={() => setSelectedExercise(exercise.id)}
-                        className="p-6 bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 border-2 border-[#A0D8E7]/30 text-left group hover:scale-105"
-                      >
-                        <Wind className="w-10 h-10 text-[#A0D8E7] mb-3 group-hover:scale-110 transition-transform" />
-                        <h4 className="font-bold text-[#3A5A98] mb-2 text-lg">{exercise.name}</h4>
-                        <p className="text-sm text-gray-600 mb-4 leading-relaxed">{exercise.description}</p>
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-gray-500 font-medium flex items-center gap-1">
-                            <Clock className="w-4 h-4" />
-                            {Math.floor(exercise.duration / 60)} min
-                          </span>
-                          <ChevronRight className="w-5 h-5 text-[#A0D8E7] group-hover:translate-x-1 transition-transform" />
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </section>
+                  <div className="text-sm text-gray-600">Continue assim! Você está indo muito bem.</div>
+                </div>
 
-                {/* Meditation */}
-                <section>
-                  <div className="flex items-center gap-3 mb-5">
-                    <Brain className="w-6 h-6 text-[#C3B1E1]" />
-                    <h3 className="text-2xl font-bold text-[#3A5A98]">Meditação</h3>
-                  </div>
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    {exercises.filter(e => e.category === "Meditação").map(exercise => (
-                      <button
-                        key={exercise.id}
-                        onClick={() => setSelectedExercise(exercise.id)}
-                        className="p-6 bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 border-2 border-[#C3B1E1]/30 text-left group hover:scale-105"
-                      >
-                        <Brain className="w-10 h-10 text-[#C3B1E1] mb-3 group-hover:scale-110 transition-transform" />
-                        <h4 className="font-bold text-[#3A5A98] mb-2 text-lg">{exercise.name}</h4>
-                        <p className="text-sm text-gray-600 mb-4 leading-relaxed">{exercise.description}</p>
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-gray-500 font-medium flex items-center gap-1">
-                            <Clock className="w-4 h-4" />
-                            {Math.floor(exercise.duration / 60)} min
-                          </span>
-                          <ChevronRight className="w-5 h-5 text-[#C3B1E1] group-hover:translate-x-1 transition-transform" />
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-
-                {/* Crisis Techniques */}
-                <section>
-                  <div className="flex items-center gap-3 mb-5">
-                    <Shield className="w-6 h-6 text-[#B0EACD]" />
-                    <h3 className="text-2xl font-bold text-[#3A5A98]">Técnicas para Crises</h3>
-                  </div>
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    {exercises.filter(e => e.category === "Crise").map(exercise => (
-                      <button
-                        key={exercise.id}
-                        onClick={() => setSelectedExercise(exercise.id)}
-                        className="p-6 bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 border-2 border-[#B0EACD]/30 text-left group hover:scale-105"
-                      >
-                        <Shield className="w-10 h-10 text-[#B0EACD] mb-3 group-hover:scale-110 transition-transform" />
-                        <h4 className="font-bold text-[#3A5A98] mb-2 text-lg">{exercise.name}</h4>
-                        <p className="text-sm text-gray-600 mb-4 leading-relaxed">{exercise.description}</p>
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-gray-500 font-medium flex items-center gap-1">
-                            <Clock className="w-4 h-4" />
-                            {Math.floor(exercise.duration / 60)} min
-                          </span>
-                          <ChevronRight className="w-5 h-5 text-[#B0EACD] group-hover:translate-x-1 transition-transform" />
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Emergency View */}
-        {currentView === "emergency" && (
-          <div className="max-w-2xl mx-auto">
-            <div className="bg-gradient-to-br from-[#3A5A98] to-[#7B9CC9] rounded-3xl shadow-2xl p-8 sm:p-12 text-white text-center">
-              <AlertCircle className="w-20 h-20 mx-auto mb-6 animate-pulse" />
-              <h2 className="text-4xl font-bold mb-4">Você está seguro</h2>
-              <p className="text-xl mb-3 leading-relaxed">
-                Isso vai passar. Respire comigo.
-              </p>
-              <p className="text-lg mb-8 opacity-90">
-                Vamos juntos, um passo de cada vez, no seu ritmo.
-              </p>
-
-              <div className="space-y-4 mb-8">
-                <button
-                  onClick={() => {
-                    setCurrentView("exercises")
-                    setSelectedExercise("box")
-                  }}
-                  className="w-full bg-white text-[#3A5A98] py-5 rounded-full font-bold hover:shadow-2xl transition-all text-lg hover:scale-105"
-                >
-                  🫁 Respiração de Emergência (Agora)
-                </button>
-                <button
-                  onClick={() => {
-                    setCurrentView("exercises")
-                    setSelectedExercise("grounding")
-                  }}
-                  className="w-full bg-white/20 backdrop-blur-sm border-2 border-white py-5 rounded-full font-bold hover:bg-white/30 transition-all text-lg hover:scale-105"
-                >
-                  🧘 Técnica 5-4-3-2-1 (Grounding)
-                </button>
-                <button
-                  onClick={() => setCurrentView("chat")}
-                  className="w-full bg-white/20 backdrop-blur-sm border-2 border-white py-5 rounded-full font-bold hover:bg-white/30 transition-all text-lg hover:scale-105"
-                >
-                  💬 Conversar com Assistente
-                </button>
-              </div>
-
-              <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-8 text-left border border-white/20">
-                <h3 className="font-bold mb-4 text-center text-xl">💙 Lembre-se:</h3>
-                <ul className="space-y-3 opacity-95 leading-relaxed">
-                  <li className="flex items-start gap-3">
-                    <span className="text-2xl">✓</span>
-                    <span>Você está seguro neste momento</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="text-2xl">✓</span>
-                    <span>Isso é temporário e vai passar</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="text-2xl">✓</span>
-                    <span>Você já passou por isso antes e conseguiu</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="text-2xl">✓</span>
-                    <span>Respire devagar, você está no controle</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="text-2xl">✓</span>
-                    <span>Não há nada de errado com você</span>
-                  </li>
-                </ul>
-              </div>
-
-              <button
-                onClick={() => setCurrentView("home")}
-                className="mt-8 text-white/90 hover:text-white underline font-medium text-lg"
-              >
-                Voltar ao início
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Chat View */}
-        {currentView === "chat" && (
-          <div className="max-w-4xl mx-auto">
-            <div className="mb-6">
-              <button
-                onClick={() => setCurrentView("home")}
-                className="text-[#3A5A98] hover:underline flex items-center gap-1 mb-4 font-medium"
-              >
-                ← Voltar
-              </button>
-              <h2 className="text-3xl font-bold text-[#3A5A98] mb-2">Médico Amigo</h2>
-              <p className="text-gray-600">Converse com nosso assistente de triagem emocional. Sem julgamentos, apenas acolhimento.</p>
-            </div>
-
-            <div className="bg-white rounded-3xl shadow-2xl border-2 border-[#A0D8E7]/30 overflow-hidden">
-              <div className="h-[500px] overflow-y-auto p-6 space-y-4 bg-gradient-to-b from-[#A0D8E7]/5 to-white">
-                {chatMessages.map((msg, i) => (
-                  <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : ''}`}>
-                    {msg.role === 'assistant' && (
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#A0D8E7] to-[#C3B1E1] flex items-center justify-center flex-shrink-0 shadow-lg">
-                        <MessageCircle className="w-5 h-5 text-white" />
+                <div className="space-y-3 mb-6">
+                  {achievements.map((achievement, idx) => (
+                    <div
+                      key={idx}
+                      className={`p-4 rounded-2xl flex items-center gap-3 transition-all ${
+                        achievement.unlocked ? 'bg-[#B0EACD]/20' : 'bg-gray-50'
+                      }`}
+                    >
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xl ${
+                        achievement.unlocked ? 'bg-[#B0EACD]' : 'bg-gray-200'
+                      }`}>
+                        {achievement.icon}
                       </div>
-                    )}
-                    <div className={`rounded-2xl p-4 max-w-[80%] shadow-md ${
-                      msg.role === 'assistant' 
-                        ? 'bg-[#A0D8E7]/20 rounded-tl-none border border-[#A0D8E7]/30' 
-                        : 'bg-gradient-to-r from-[#3A5A98] to-[#7B9CC9] text-white rounded-tr-none'
-                    }`}>
-                      <p className={msg.role === 'assistant' ? 'text-gray-800' : 'text-white'}>
-                        {msg.content}
-                      </p>
+                      <span className={`font-medium ${achievement.unlocked ? 'text-[#3A5A98]' : 'text-gray-400'}`}>
+                        {achievement.name}
+                      </span>
                     </div>
-                    {msg.role === 'user' && (
-                      <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0 shadow-lg">
-                        <User className="w-5 h-5 text-gray-600" />
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-7 gap-2">
+                  {[...Array(7)].map((_, i) => (
+                    <div key={i} className="text-center">
+                      <div className={`w-full h-12 rounded-lg mb-1 transition-all ${
+                        i < 5 ? 'bg-[#B0EACD]' : 'bg-gray-100'
+                      }`}></div>
+                      <span className="text-xs text-gray-500">
+                        {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'][i]}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+
+            {/* Plano Semanal Personalizado */}
+            <section className="mb-8 bg-white rounded-3xl shadow-lg p-6 sm:p-8 border border-[#A0D8E7]/30">
+              <div className="flex items-center gap-3 mb-6">
+                <Target className="w-6 h-6 text-[#3A5A98]" />
+                <h3 className="text-2xl font-bold text-[#3A5A98]">Seu Plano Semanal</h3>
+              </div>
+              <p className="text-gray-600 mb-6">Atividades personalizadas baseadas no seu perfil</p>
+              
+              <div className="space-y-4">
+                {weeklyPlan.map((item, idx) => (
+                  <div key={idx} className="p-4 bg-gradient-to-r from-[#A0D8E7]/10 to-[#C3B1E1]/10 rounded-2xl">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl">{item.icon}</span>
+                        <span className="font-medium text-[#3A5A98]">{item.activity}</span>
                       </div>
-                    )}
+                      <span className="text-sm text-gray-600">{item.completed}/{item.target}</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div 
+                        className="bg-gradient-to-r from-[#A0D8E7] to-[#C3B1E1] h-2 rounded-full transition-all"
+                        style={{ width: `${(item.completed / item.target) * 100}%` }}
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
+            </section>
 
-              <div className="border-t-2 border-[#A0D8E7]/30 p-4 bg-gray-50">
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleChatSend()}
-                    placeholder="Digite sua mensagem..."
-                    className="flex-1 px-5 py-4 rounded-full border-2 border-[#A0D8E7]/30 focus:outline-none focus:border-[#A0D8E7] transition-colors"
-                  />
-                  <button 
-                    onClick={handleChatSend}
-                    className="px-8 py-4 bg-gradient-to-r from-[#A0D8E7] to-[#C3B1E1] text-white rounded-full font-bold hover:shadow-xl transition-all"
-                  >
-                    Enviar
-                  </button>
-                </div>
+            {/* Médico Amigo - Card de Acesso */}
+            <section className="mb-8 bg-gradient-to-br from-[#3A5A98] to-[#A0D8E7] rounded-3xl shadow-xl p-6 sm:p-8 text-white">
+              <div className="flex items-center gap-3 mb-4">
+                <MessageCircle className="w-6 h-6" />
+                <h3 className="text-2xl font-bold">Médico Amigo</h3>
               </div>
-            </div>
-          </div>
+              <p className="mb-6 opacity-90">
+                Converse comigo sobre o que você está sentindo. Vou ajudar você a entender e encontrar o melhor caminho.
+              </p>
+              <button
+                onClick={() => setShowChat(true)}
+                className="w-full bg-white border-2 border-[#A0D8E7] text-[#3A5A98] py-4 rounded-full font-medium hover:shadow-lg transition-all"
+              >
+                Conversar com Médico Amigo
+              </button>
+            </section>
+          </>
         )}
 
-        {/* Calendar View */}
-        {currentView === "calendar" && (
-          <div className="max-w-6xl mx-auto">
-            <div className="mb-6">
-              <button
-                onClick={() => setCurrentView("home")}
-                className="text-[#3A5A98] hover:underline flex items-center gap-1 mb-4 font-medium"
-              >
-                ← Voltar
-              </button>
-              <h2 className="text-3xl font-bold text-[#3A5A98] mb-2">Calendário Emocional</h2>
-              <p className="text-gray-600">Visualize seus padrões e evolução ao longo do tempo</p>
-            </div>
-
-            <div className="grid lg:grid-cols-3 gap-6">
-              {/* Calendar */}
-              <div className="lg:col-span-2 bg-white rounded-3xl shadow-xl p-6 border-2 border-[#A0D8E7]/30">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-xl font-bold text-[#3A5A98]">Janeiro 2025</h3>
-                  <div className="flex gap-2">
-                    <button className="p-2 hover:bg-gray-100 rounded-lg transition-all">←</button>
-                    <button className="p-2 hover:bg-gray-100 rounded-lg transition-all">→</button>
+        {currentView === "exercises" && (
+          <section className="bg-white rounded-3xl shadow-lg p-6 sm:p-8">
+            <h2 className="text-3xl font-bold text-[#3A5A98] mb-6">Exercícios Guiados</h2>
+            <p className="text-gray-600 mb-8">Escolha um exercício e marque se funcionou para você. Assim, vamos aprender juntos.</p>
+            
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {exercises.map((exercise) => (
+                <div
+                  key={exercise.id}
+                  className="p-5 bg-gradient-to-br from-[#A0D8E7]/10 to-[#C3B1E1]/10 rounded-2xl hover:shadow-lg transition-all border border-[#A0D8E7]/30"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <h4 className="font-bold text-[#3A5A98]">{exercise.name}</h4>
+                    <span className="text-xs bg-[#B0EACD] text-[#3A5A98] px-2 py-1 rounded-full flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      {exercise.duration}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-600 mb-4">{exercise.description}</p>
+                  <button 
+                    onClick={() => startExercise(exercise)}
+                    className="w-full bg-gradient-to-r from-[#A0D8E7] to-[#C3B1E1] text-white py-2 rounded-full text-sm font-medium hover:shadow-md transition-all flex items-center justify-center gap-2"
+                  >
+                    <Play className="w-4 h-4" />
+                    Iniciar
+                  </button>
+                  
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      onClick={() => markExerciseWorked(exercise.id, true)}
+                      className="flex-1 text-xs py-2 rounded-full bg-green-100 text-green-700 hover:bg-green-200 transition-all"
+                    >
+                      👍 Funcionou
+                    </button>
+                    <button
+                      onClick={() => markExerciseWorked(exercise.id, false)}
+                      className="flex-1 text-xs py-2 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition-all"
+                    >
+                      👎 Não ajudou
+                    </button>
                   </div>
                 </div>
-                <div className="grid grid-cols-7 gap-2">
-                  {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(day => (
-                    <div key={day} className="text-center text-sm font-bold text-gray-600 py-2">
-                      {day}
+              ))}
+            </div>
+          </section>
+        )}
+
+        {currentView === "calendar" && (
+          <section className="bg-white rounded-3xl shadow-lg p-6 sm:p-8">
+            <h2 className="text-3xl font-bold text-[#3A5A98] mb-6">Calendário Emocional</h2>
+            <p className="text-gray-600 mb-8">Veja seus padrões ao longo do tempo. Conhecimento é poder.</p>
+            
+            <div className="mb-6">
+              <div className="grid grid-cols-7 gap-2 mb-2">
+                {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(day => (
+                  <div key={day} className="text-center text-sm font-medium text-gray-600">
+                    {day}
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-7 gap-2">
+                {[...Array(35)].map((_, i) => {
+                  const intensity = Math.random()
+                  return (
+                    <div
+                      key={i}
+                      className={`aspect-square rounded-lg flex items-center justify-center text-sm font-medium cursor-pointer transition-all hover:scale-110 ${
+                        intensity > 0.7 ? 'bg-[#3A5A98] text-white' :
+                        intensity > 0.4 ? 'bg-[#A0D8E7] text-white' :
+                        intensity > 0.2 ? 'bg-[#B0EACD]' :
+                        'bg-gray-100'
+                      }`}
+                      title={`Ansiedade: ${Math.floor(intensity * 10)}/10`}
+                    >
+                      {i + 1}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="p-6 bg-[#A0D8E7]/10 rounded-2xl mb-6">
+              <h3 className="font-bold text-[#3A5A98] mb-3 flex items-center gap-2">
+                <Sparkles className="w-5 h-5" />
+                Padrões Identificados
+              </h3>
+              <ul className="space-y-2 text-sm text-gray-700">
+                <li className="flex items-start gap-2">
+                  <div className="w-2 h-2 bg-[#A0D8E7] rounded-full mt-1.5" />
+                  <span>Você tem mais crises de ansiedade no período da noite (após 20h)</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <div className="w-2 h-2 bg-[#A0D8E7] rounded-full mt-1.5" />
+                  <span>Segundas e terças-feiras são dias mais sensíveis</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <div className="w-2 h-2 bg-[#B0EACD] rounded-full mt-1.5" />
+                  <span>Sua ansiedade diminuiu 23% nas últimas 2 semanas - parabéns!</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <div className="w-2 h-2 bg-[#C3B1E1] rounded-full mt-1.5" />
+                  <span>Exercícios de respiração têm ajudado nos momentos críticos</span>
+                </li>
+              </ul>
+            </div>
+
+            {moodEntries.length > 0 && (
+              <div className="p-6 bg-white border border-[#C3B1E1]/30 rounded-2xl">
+                <h3 className="font-bold text-[#3A5A98] mb-4">Últimos Registros</h3>
+                <div className="space-y-3">
+                  {moodEntries.slice(-5).reverse().map((entry, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                      <div className="flex items-center gap-3">
+                        <div className="text-2xl">
+                          {moods.find(m => m.label === entry.mood)?.emoji}
+                        </div>
+                        <div>
+                          <div className="font-medium text-[#3A5A98]">{entry.mood}</div>
+                          <div className="text-xs text-gray-500">{entry.time}</div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm font-medium text-gray-700">Ansiedade: {entry.anxiety}/10</div>
+                        {entry.triggers.length > 0 && (
+                          <div className="text-xs text-gray-500">{entry.triggers[0]}</div>
+                        )}
+                      </div>
                     </div>
                   ))}
-                  {[...Array(31)].map((_, i) => {
-                    const colors = ['bg-[#B0EACD]', 'bg-[#A0D8E7]', 'bg-[#C3B1E1]', 'bg-[#7B9CC9]', 'bg-gray-100']
-                    const randomColor = colors[Math.floor(Math.random() * colors.length)]
-                    return (
-                      <button
-                        key={i}
-                        className={`aspect-square rounded-xl ${randomColor} hover:scale-110 transition-all flex items-center justify-center text-sm font-bold shadow-sm hover:shadow-lg`}
-                      >
-                        {i + 1}
-                      </button>
-                    )
-                  }))}
                 </div>
               </div>
+            )}
+          </section>
+        )}
 
-              {/* Stats */}
-              <div className="space-y-6">
-                <div className="bg-white rounded-3xl shadow-xl p-6 border-2 border-[#B0EACD]/30">
-                  <h3 className="text-xl font-bold text-[#3A5A98] mb-5">Estatísticas</h3>
-                  <div className="space-y-5">
-                    <div>
-                      <div className="flex justify-between mb-2">
-                        <span className="text-sm text-gray-600 font-medium">Dias tranquilos</span>
-                        <span className="text-sm font-bold text-[#3A5A98]">18 dias</span>
-                      </div>
-                      <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-gradient-to-r from-[#B0EACD] to-[#A0D8E7] w-[60%] rounded-full"></div>
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex justify-between mb-2">
-                        <span className="text-sm text-gray-600 font-medium">Dias ansiosos</span>
-                        <span className="text-sm font-bold text-[#3A5A98]">8 dias</span>
-                      </div>
-                      <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-gradient-to-r from-[#7B9CC9] to-[#3A5A98] w-[27%] rounded-full"></div>
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex justify-between mb-2">
-                        <span className="text-sm text-gray-600 font-medium">Média de ansiedade</span>
-                        <span className="text-sm font-bold text-[#3A5A98]">4.2/10</span>
-                      </div>
-                      <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-gradient-to-r from-[#C3B1E1] to-[#A0D8E7] w-[42%] rounded-full"></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-gradient-to-br from-[#A0D8E7]/20 to-[#C3B1E1]/20 rounded-3xl shadow-xl p-6 border-2 border-[#A0D8E7]/50">
-                  <div className="flex items-start gap-3">
-                    <Brain className="w-7 h-7 text-[#3A5A98] mt-1 flex-shrink-0" />
-                    <div>
-                      <h4 className="font-bold text-[#3A5A98] mb-3 text-lg">💡 Insight da IA</h4>
-                      <p className="text-sm text-gray-700 leading-relaxed mb-3">
-                        Percebi que sua ansiedade tende a aumentar às terças e quintas-feiras. Isso pode estar relacionado ao trabalho ou compromissos específicos desses dias?
-                      </p>
-                      <p className="text-xs text-gray-600">
-                        Considere planejar exercícios de respiração preventivos nesses dias.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-3xl shadow-xl p-6 border-2 border-[#C3B1E1]/30">
-                  <h4 className="font-bold text-[#3A5A98] mb-4 flex items-center gap-2">
-                    <Award className="w-5 h-5" />
-                    Conquistas
-                  </h4>
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3 p-3 bg-[#B0EACD]/20 rounded-xl">
-                      <span className="text-2xl">🏆</span>
-                      <div>
-                        <div className="text-sm font-bold text-[#3A5A98]">7 dias seguidos</div>
-                        <div className="text-xs text-gray-600">Registrando emoções</div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 p-3 bg-[#A0D8E7]/20 rounded-xl">
-                      <span className="text-2xl">⭐</span>
-                      <div>
-                        <div className="text-sm font-bold text-[#3A5A98]">20+ exercícios</div>
-                        <div className="text-xs text-gray-600">Cuidando de você</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+        {currentView === "community" && (
+          <section className="bg-white rounded-3xl shadow-lg p-6 sm:p-8">
+            <h2 className="text-3xl font-bold text-[#3A5A98] mb-6">Comunidade Serenar</h2>
+            <p className="text-gray-600 mb-8">Um espaço seguro para compartilhar, apoiar e crescer juntos. Todos os posts são anônimos e moderados 24h.</p>
+            
+            {/* Criar novo post */}
+            <div className="mb-8 p-6 bg-gradient-to-br from-[#A0D8E7]/10 to-[#C3B1E1]/10 rounded-2xl border-2 border-dashed border-[#A0D8E7]/30">
+              <h3 className="font-bold text-[#3A5A98] mb-3">Compartilhe sua história</h3>
+              <textarea
+                value={newPostText}
+                onChange={(e) => setNewPostText(e.target.value)}
+                placeholder="Como você está se sentindo? Compartilhe uma conquista, um desafio ou uma palavra de apoio..."
+                className="w-full h-24 p-4 border-2 border-[#A0D8E7]/30 rounded-2xl focus:outline-none focus:border-[#A0D8E7] transition-colors resize-none mb-3"
+              />
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-gray-500">
+                  {userProfile?.frequency && (
+                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-[#B0EACD]/20 rounded-full mr-2">
+                      <span className="w-2 h-2 bg-[#B0EACD] rounded-full" />
+                      Perfil: {userProfile.frequency}
+                    </span>
+                  )}
+                  Seu post será anônimo e seguro
+                </p>
+                <button
+                  onClick={createPost}
+                  className="px-6 py-2 bg-gradient-to-r from-[#A0D8E7] to-[#C3B1E1] text-white rounded-full font-medium hover:shadow-lg transition-all flex items-center gap-2"
+                >
+                  <Send className="w-4 h-4" />
+                  Compartilhar
+                </button>
               </div>
             </div>
-          </div>
+
+            {/* Lista de posts */}
+            <div className="space-y-4">
+              {communityPosts.map((post) => (
+                <div key={post.id} className="p-5 bg-gradient-to-br from-[#A0D8E7]/10 to-[#C3B1E1]/10 rounded-2xl hover:shadow-md transition-all border border-[#A0D8E7]/20">
+                  <div className="flex items-start gap-3 mb-3">
+                    <div className="w-10 h-10 rounded-full bg-[#A0D8E7] flex items-center justify-center text-white font-bold flex-shrink-0">
+                      {post.avatar}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <div className="font-medium text-[#3A5A98]">{post.user}</div>
+                          {post.userProfile?.frequency && (
+                            <span className="text-xs px-2 py-0.5 bg-[#B0EACD]/20 text-[#3A5A98] rounded-full">
+                              {post.userProfile.frequency}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-xs text-gray-500">{post.time}</span>
+                      </div>
+                      <p className="text-gray-700 mb-3">{post.message}</p>
+                      {post.userProfile?.goals && post.userProfile.goals.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-3">
+                          {post.userProfile.goals.slice(0, 2).map((goal, idx) => (
+                            <span key={idx} className="text-xs px-2 py-1 bg-[#C3B1E1]/20 text-[#3A5A98] rounded-full">
+                              🎯 {goal}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-4 text-sm text-gray-500 ml-13 mb-3">
+                    <button 
+                      onClick={() => likePost(post.id)}
+                      className="flex items-center gap-1 hover:text-[#3A5A98] transition-colors"
+                    >
+                      <Heart className="w-4 h-4" />
+                      {post.likes}
+                    </button>
+                    <button 
+                      onClick={() => setSelectedPost(selectedPost === post.id ? null : post.id)}
+                      className="hover:text-[#3A5A98] transition-colors"
+                    >
+                      Responder ({post.comments.length})
+                    </button>
+                    <button className="hover:text-[#3A5A98] transition-colors flex items-center gap-1">
+                      <ThumbsUp className="w-4 h-4" />
+                      Apoiar
+                    </button>
+                  </div>
+
+                  {/* Comentários */}
+                  {post.comments.length > 0 && (
+                    <div className="ml-13 space-y-2 mb-3 pl-4 border-l-2 border-[#A0D8E7]/30">
+                      {post.comments.map((comment) => (
+                        <div key={comment.id} className="p-3 bg-white/50 rounded-xl">
+                          <div className="flex items-start gap-2">
+                            <div className="w-6 h-6 rounded-full bg-[#C3B1E1] flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                              {comment.avatar}
+                            </div>
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-sm font-medium text-[#3A5A98]">{comment.user}</span>
+                                <span className="text-xs text-gray-500">{comment.time}</span>
+                              </div>
+                              <p className="text-sm text-gray-700">{comment.message}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Adicionar comentário */}
+                  {selectedPost === post.id && (
+                    <div className="ml-13 mt-3 flex gap-2">
+                      <input
+                        type="text"
+                        value={newCommentText}
+                        onChange={(e) => setNewCommentText(e.target.value)}
+                        placeholder="Escreva uma palavra de apoio..."
+                        className="flex-1 px-4 py-2 border-2 border-[#A0D8E7]/30 rounded-full focus:outline-none focus:border-[#A0D8E7] transition-colors text-sm"
+                        onKeyPress={(e) => e.key === 'Enter' && addComment(post.id)}
+                      />
+                      <button
+                        onClick={() => addComment(post.id)}
+                        className="px-4 py-2 bg-[#A0D8E7] text-white rounded-full text-sm font-medium hover:shadow-md transition-all"
+                      >
+                        <Send className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-6 p-4 bg-[#B0EACD]/10 rounded-2xl text-center">
+              <p className="text-sm text-gray-600">
+                💚 Esta comunidade é moderada 24h para garantir um espaço seguro e acolhedor para todos.
+              </p>
+            </div>
+          </section>
+        )}
+
+        {currentView === "learning" && (
+          <section className="bg-white rounded-3xl shadow-lg p-6 sm:p-8">
+            <h2 className="text-3xl font-bold text-[#3A5A98] mb-6">Conteúdos Profissionais</h2>
+            <p className="text-gray-600 mb-8">Aprenda com especialistas sobre ansiedade, técnicas e bem-estar.</p>
+            
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[
+                { title: "Entendendo a Ansiedade", duration: "8 min", type: "Vídeo", category: "Fundamentos" },
+                { title: "Técnicas de Respiração", duration: "12 min", type: "Curso", category: "Prática" },
+                { title: "Higiene do Sono", duration: "6 min", type: "Vídeo", category: "Bem-estar" },
+                { title: "Mindfulness no Dia a Dia", duration: "15 min", type: "Curso", category: "Meditação" },
+                { title: "Gatilhos Emocionais", duration: "10 min", type: "Vídeo", category: "Autoconhecimento" },
+                { title: "Autocuidado Prático", duration: "20 min", type: "Curso", category: "Rotina" }
+              ].map((content, idx) => (
+                <div key={idx} className="group cursor-pointer">
+                  <div className="aspect-video bg-gradient-to-br from-[#A0D8E7] to-[#C3B1E1] rounded-2xl mb-3 flex items-center justify-center group-hover:shadow-lg transition-all relative overflow-hidden">
+                    <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-all" />
+                    <Play className="w-12 h-12 text-white relative z-10 group-hover:scale-110 transition-transform" />
+                  </div>
+                  <h4 className="font-bold text-[#3A5A98] mb-2">{content.title}</h4>
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <span className="px-2 py-1 bg-[#B0EACD]/20 rounded-full text-xs font-medium">{content.type}</span>
+                    <span className="flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      {content.duration}
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">{content.category}</div>
+                </div>
+              ))}
+            </div>
+          </section>
         )}
       </main>
 
       {/* Footer */}
-      <footer className="bg-white/90 backdrop-blur-md border-t border-[#A0D8E7]/30 mt-16 py-8">
+      <footer className="bg-white/80 backdrop-blur-sm border-t border-[#A0D8E7]/30 py-8">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <div className="flex items-center justify-center gap-2 mb-3">
-            <Heart className="w-5 h-5 text-[#3A5A98]" />
-            <p className="text-gray-700 font-medium">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <Sparkles className="w-5 h-5 text-[#A0D8E7]" />
+            <p className="text-gray-600 font-medium">
               Serenar - Sua ferramenta de autocuidado no bolso
             </p>
           </div>
-          <p className="text-sm text-gray-500 leading-relaxed">
-            Feito com carinho para quem busca leveza, clareza e paz. Um passo de cada vez, no seu ritmo. 💙
+          <p className="text-sm text-gray-500">
+            Feito com carinho para quem busca leveza, clareza e paz 💙
           </p>
         </div>
       </footer>
