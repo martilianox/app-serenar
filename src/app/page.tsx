@@ -70,10 +70,31 @@ type QuickQuestion = {
   exercises: string[]
 }
 
+// Função para gerar UUID válido
+function generateUUID(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0
+    const v = c === 'x' ? r : (r & 0x3 | 0x8)
+    return v.toString(16)
+  })
+}
+
 export default function Home() {
   // Estado do Splash Screen
   const [showSplash, setShowSplash] = useState(true)
   const [splashFadeOut, setSplashFadeOut] = useState(false)
+
+  // Estado do Onboarding
+  const [showOnboarding, setShowOnboarding] = useState(false)
+  const [onboardingStep, setOnboardingStep] = useState(1)
+  const [onboardingData, setOnboardingData] = useState({
+    name: "",
+    age: "",
+    frequency: "",
+    symptoms: [] as string[],
+    professional: "",
+    goals: [] as string[]
+  })
 
   // Estados principais
   const [userProfile, setUserProfile] = useState<UserProfileType | null>(null)
@@ -202,38 +223,38 @@ export default function Home() {
       id: "1",
       text: "Estou com ansiedade agora",
       category: "anxiety",
-      exercises: ["1", "2", "3", "4"] // IDs dos exercícios de respiração
+      exercises: ["1", "2", "3", "4"]
     },
     {
       id: "2",
       text: "Minha mente está acelerada",
       category: "racing-thoughts",
-      exercises: ["5", "6", "9"] // Meditação e reestruturação
+      exercises: ["5", "6", "9"]
     },
     {
       id: "3",
       text: "Estou com medo",
       category: "fear",
-      exercises: ["7", "8", "10"] // Grounding e cartões
+      exercises: ["7", "8", "10"]
     },
     {
       id: "4",
       text: "Me sinto deprimido",
       category: "depression",
-      exercises: ["5", "6", "10"] // Meditação e cartões
+      exercises: ["5", "6", "10"]
     }
   ]
 
   // Efeito do Splash Screen
   useEffect(() => {
-    // Após 2 segundos, inicia o fade out
     const fadeTimer = setTimeout(() => {
       setSplashFadeOut(true)
     }, 2000)
 
-    // Após 3 segundos (2s exibição + 1s fade), remove o splash
     const hideTimer = setTimeout(() => {
       setShowSplash(false)
+      // Verificar se precisa mostrar onboarding
+      checkNeedOnboarding()
     }, 3000)
 
     return () => {
@@ -242,36 +263,44 @@ export default function Home() {
     }
   }, [])
 
-  // Inicializar userId e criar perfil padrão
-  useEffect(() => {
-    const initUser = async () => {
-      let storedUserId = localStorage.getItem('serenar_user_id')
-      if (!storedUserId) {
-        storedUserId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        localStorage.setItem('serenar_user_id', storedUserId)
-      }
-      setUserId(storedUserId)
-      
-      // Criar perfil padrão
-      const defaultProfile: UserProfileType = {
-        name: "Usuário",
-        age: 25,
-        frequency: "Algumas vezes por semana",
-        symptoms: [],
-        moments: [],
-        professional: "Não",
-        goals: ["Ter mais paz no dia a dia"],
-        photo: ""
-      }
-      
-      setUserProfile(defaultProfile)
-      
-      // Verificar última anamnese
-      await checkLastAnamnesis(storedUserId)
-    }
+  // Verificar se usuário precisa fazer onboarding
+  const checkNeedOnboarding = async () => {
+    let storedUserId = localStorage.getItem('serenar_user_id')
     
-    initUser()
-  }, [])
+    if (!storedUserId) {
+      // Novo usuário - gerar UUID válido
+      storedUserId = generateUUID()
+      localStorage.setItem('serenar_user_id', storedUserId)
+      setUserId(storedUserId)
+      setShowOnboarding(true)
+    } else {
+      // Usuário existente - verificar se tem perfil
+      setUserId(storedUserId)
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('user_id', storedUserId)
+        .single()
+      
+      if (data && !error) {
+        // Perfil existe - carregar dados
+        setUserProfile({
+          name: data.name || "Usuário",
+          age: parseInt(data.idade) || 25,
+          frequency: data.frequencia_crises || "Algumas vezes por semana",
+          symptoms: data.sintomas_principais || [],
+          moments: [],
+          professional: data.tratamento_atual || "Não",
+          goals: [],
+          photo: ""
+        })
+        await checkLastAnamnesis(storedUserId)
+      } else {
+        // Perfil não existe - mostrar onboarding
+        setShowOnboarding(true)
+      }
+    }
+  }
 
   // Verificar se pode preencher anamnese hoje
   const checkLastAnamnesis = async (uid: string) => {
@@ -290,6 +319,58 @@ export default function Home() {
     } else {
       setCanFillAnamnesis(true)
       setLastAnamnesisDate(null)
+    }
+  }
+
+  // Salvar perfil do onboarding
+  const saveOnboardingProfile = async () => {
+    if (!onboardingData.name.trim()) {
+      alert("Por favor, preencha seu nome.")
+      return
+    }
+
+    if (!onboardingData.age || parseInt(onboardingData.age) < 1) {
+      alert("Por favor, preencha sua idade.")
+      return
+    }
+
+    if (!onboardingData.frequency) {
+      alert("Por favor, selecione a frequência da ansiedade.")
+      return
+    }
+
+    // Salvar no Supabase
+    const { error } = await supabase
+      .from('user_profiles')
+      .insert({
+        user_id: userId,
+        name: onboardingData.name,
+        idade: onboardingData.age,
+        frequencia_crises: onboardingData.frequency,
+        sintomas_principais: onboardingData.symptoms,
+        tratamento_atual: onboardingData.professional,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+
+    if (!error) {
+      // Criar perfil local
+      setUserProfile({
+        name: onboardingData.name,
+        age: parseInt(onboardingData.age),
+        frequency: onboardingData.frequency,
+        symptoms: onboardingData.symptoms,
+        moments: [],
+        professional: onboardingData.professional,
+        goals: onboardingData.goals,
+        photo: ""
+      })
+      
+      setShowOnboarding(false)
+      await checkLastAnamnesis(userId)
+    } else {
+      alert("❌ Erro ao salvar perfil. Tente novamente.")
+      console.error(error)
     }
   }
 
@@ -513,19 +594,25 @@ export default function Home() {
       .from('user_profiles')
       .update({
         name: profileForm.name,
+        idade: profileForm.age.toString(),
+        frequencia_crises: profileForm.frequency,
+        sintomas_principais: profileForm.symptoms,
+        tratamento_atual: profileForm.professional,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', userId)
+    
+    if (!error) {
+      setUserProfile({
+        name: profileForm.name,
         age: profileForm.age,
         frequency: profileForm.frequency,
         symptoms: profileForm.symptoms,
         moments: profileForm.moments,
         professional: profileForm.professional,
         goals: profileForm.goals,
-        photo: profileForm.photo,
-        updated_at: new Date().toISOString()
+        photo: profileForm.photo
       })
-      .eq('user_id', userId)
-    
-    if (!error) {
-      setUserProfile(profileForm)
       setShowProfileEdit(false)
       alert("✅ Perfil atualizado com sucesso!")
     } else {
@@ -918,6 +1005,130 @@ Gerado por Serenar - Seu companheiro de bem-estar
           />
           <h1 className="text-5xl font-bold text-white mb-3 drop-shadow-lg">Serenar</h1>
           <p className="text-xl text-white/90 drop-shadow-md">Cultive a paz interior</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Renderização do Onboarding
+  if (showOnboarding) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#A0D8E7]/20 via-white to-[#C3B1E1]/20 flex items-center justify-center p-4">
+        <div className="max-w-2xl w-full bg-white rounded-3xl shadow-2xl p-8 sm:p-12">
+          <div className="text-center mb-8">
+            <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-[#A0D8E7] to-[#C3B1E1] flex items-center justify-center">
+              <Heart className="w-10 h-10 text-white" />
+            </div>
+            <h2 className="text-3xl font-bold text-[#3A5A98] mb-2">Bem-vindo ao Serenar</h2>
+            <p className="text-gray-600">Vamos conhecer você melhor para personalizar sua experiência</p>
+          </div>
+
+          <div className="space-y-6">
+            {/* Nome */}
+            <div>
+              <label className="block text-sm font-medium text-[#3A5A98] mb-2">
+                Como você gostaria de ser chamado? *
+              </label>
+              <input
+                type="text"
+                value={onboardingData.name}
+                onChange={(e) => setOnboardingData({ ...onboardingData, name: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-[#A0D8E7] transition-colors"
+                placeholder="Seu nome ou apelido"
+              />
+            </div>
+
+            {/* Idade */}
+            <div>
+              <label className="block text-sm font-medium text-[#3A5A98] mb-2">
+                Qual sua idade? *
+              </label>
+              <input
+                type="number"
+                value={onboardingData.age}
+                onChange={(e) => setOnboardingData({ ...onboardingData, age: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-[#A0D8E7] transition-colors"
+                placeholder="Ex: 25"
+                min="1"
+                max="120"
+              />
+            </div>
+
+            {/* Frequência */}
+            <div>
+              <label className="block text-sm font-medium text-[#3A5A98] mb-2">
+                Com que frequência você sente ansiedade? *
+              </label>
+              <select
+                value={onboardingData.frequency}
+                onChange={(e) => setOnboardingData({ ...onboardingData, frequency: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-[#A0D8E7] transition-colors"
+              >
+                <option value="">Selecione...</option>
+                <option value="Diariamente">Diariamente</option>
+                <option value="Algumas vezes por semana">Algumas vezes por semana</option>
+                <option value="Raramente">Raramente</option>
+                <option value="Não tenho certeza">Não tenho certeza</option>
+              </select>
+            </div>
+
+            {/* Sintomas */}
+            <div>
+              <label className="block text-sm font-medium text-[#3A5A98] mb-2">
+                Quais sintomas você costuma sentir? (opcional)
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {["Taquicardia", "Aperto no peito", "Pensamentos acelerados", "Sudorese", "Tremores", "Dificuldade para respirar"].map((symptom) => (
+                  <button
+                    key={symptom}
+                    onClick={() => {
+                      const updated = onboardingData.symptoms.includes(symptom)
+                        ? onboardingData.symptoms.filter(s => s !== symptom)
+                        : [...onboardingData.symptoms, symptom]
+                      setOnboardingData({ ...onboardingData, symptoms: updated })
+                    }}
+                    className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                      onboardingData.symptoms.includes(symptom)
+                        ? 'bg-[#B0EACD] text-[#3A5A98] shadow-md'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {symptom}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Acompanhamento */}
+            <div>
+              <label className="block text-sm font-medium text-[#3A5A98] mb-2">
+                Você tem acompanhamento profissional? (opcional)
+              </label>
+              <select
+                value={onboardingData.professional}
+                onChange={(e) => setOnboardingData({ ...onboardingData, professional: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-2xl focus:outline-none focus:border-[#A0D8E7] transition-colors"
+              >
+                <option value="">Selecione...</option>
+                <option value="Sim, com psicólogo">Sim, com psicólogo</option>
+                <option value="Sim, com psiquiatra">Sim, com psiquiatra</option>
+                <option value="Sim, com ambos">Sim, com ambos</option>
+                <option value="Não, mas gostaria">Não, mas gostaria</option>
+                <option value="Não">Não</option>
+              </select>
+            </div>
+          </div>
+
+          <button
+            onClick={saveOnboardingProfile}
+            className="w-full mt-8 bg-gradient-to-r from-[#A0D8E7] to-[#C3B1E1] text-white py-4 rounded-full font-medium hover:shadow-lg transition-all"
+          >
+            Começar Minha Jornada
+          </button>
+
+          <p className="text-xs text-gray-500 text-center mt-4">
+            * Campos obrigatórios. Seus dados são privados e seguros.
+          </p>
         </div>
       </div>
     )
